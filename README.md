@@ -365,6 +365,46 @@ Object-key ORDER is not part of that schema — aeson does not preserve the
 written order and `serde_json` sorts — so compare the two through a JSON
 reader (`jq -S`), never byte-for-byte.
 
+## Per-lemma proof budget
+
+`--lemma-timeout=SECONDS` is a ZKSec-branch addition with no counterpart in
+upstream Tamarin or in our Haskell fork — neither has a per-lemma wall-clock
+budget. It gives each targeted lemma at most that much proof search; a lemma
+still running when its budget expires is cut short, reported
+`analysis incomplete`, and **the run continues with the next lemma**:
+
+```sh
+tamarin-rs --prove --lemma-timeout=30 model.spthy
+```
+
+Without it, one non-converging lemma blocks the whole file and every other
+result in it is lost — you learn nothing about the lemmas that would have
+finished. That is the failure mode the flag exists to remove, and it is the
+difference between "this model has a problem somewhere" and "these four
+lemmas are fine, this one does not converge".
+
+Notes:
+
+- **Absent, it changes nothing.** No budget is installed and the search runs
+  unbounded, which is the HS-faithful default. A cut only ever happens because
+  you asked for one.
+- **A cut is never a verdict.** The lemma reports `analysis incomplete`, so an
+  overrunning lemma cannot be mistaken for a proved or a falsified one. Under
+  `--state-audit` it lands in the `incomplete` bucket and the process exits
+  `3`, which already means "inconclusive" there — distinguishable from the `2`
+  that means "this property is false".
+- **The budget is per lemma, not per run.** A lemma's position in the file does
+  not eat into its budget.
+- **It bounds proof search, not theory loading.** A theory that is slow to
+  close is unaffected; the budget starts when the lemma's search does.
+- `=0` is a budget of zero seconds — already spent when the search starts, so
+  every targeted lemma comes back `analysis incomplete`. That is the
+  deterministic way to exercise the path (`tests/lemma_timeout.rs` uses it);
+  omit the flag to run unbounded.
+- It composes with `--bound=N`, which cuts by proof DEPTH rather than by wall
+  clock. Depth is reproducible but hard to choose; a time budget is the one you
+  want when the question is "is this lemma going to finish at all?".
+
 ## Not yet ported
 
 - **`diff(...)` / `--diff`** — observational-equivalence mode.

@@ -584,6 +584,52 @@ fn state_audit_conflicts_with_a_subcommand() {
     );
 }
 
+/// `--lemma-timeout` is `=`-only like the other scalar search-cutting flags,
+/// and absent means unbounded — the HS-faithful default, since HS has no
+/// per-lemma wall-clock budget at all.
+#[test]
+fn lemma_timeout_flag() {
+    let a = parse(&["--lemma-timeout=30", "x.spthy"]);
+    assert_eq!(a.lemma_timeout, Some(30));
+
+    // Absent: no budget.
+    let a = parse(&["x.spthy"]);
+    assert_eq!(a.lemma_timeout, None);
+
+    // Last-occurrence-wins, like every other scalar flag.
+    let a = parse(&["--lemma-timeout=5", "--lemma-timeout=9", "x.spthy"]);
+    assert_eq!(a.lemma_timeout, Some(9));
+}
+
+/// `=0` is a budget of zero seconds, not "no budget": the deadline is already
+/// spent when the search starts, so every targeted lemma comes back
+/// `analysis incomplete`.  It is the deterministic way to exercise the whole
+/// timeout path without depending on machine speed, and
+/// `tests/lemma_timeout.rs` uses it for exactly that.  Omit the flag to run
+/// unbounded.
+#[test]
+fn lemma_timeout_zero_is_a_zero_budget_not_an_absent_one() {
+    let a = parse(&["--lemma-timeout=0", "x.spthy"]);
+    assert_eq!(a.lemma_timeout, Some(0));
+}
+
+/// It takes an `=` value: a detached token stays a positional input file,
+/// matching `--bound` and every other `require_equals` flag.
+#[test]
+fn lemma_timeout_is_equals_only() {
+    let a = parse(&["--lemma-timeout=7", "x.spthy"]);
+    assert_eq!(a.lemma_timeout, Some(7));
+    assert_eq!(a.in_files, vec!["x.spthy"]);
+}
+
+/// It is `global`, so it works on either side of a subcommand word, like
+/// `--bound`.
+#[test]
+fn lemma_timeout_is_global() {
+    let a = parse(&["interactive", "--lemma-timeout=12", "x.spthy"]);
+    assert_eq!(a.lemma_timeout, Some(12));
+}
+
 // =========================================================================
 // Boolean flags
 // =========================================================================

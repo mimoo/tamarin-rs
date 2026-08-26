@@ -606,6 +606,35 @@ today's ledger that is 23 rows (pe 19, json 3, module 1). Read `verdict=OK
 UNCOMPARED=19` as "the rows it compared agree, and 19 were not compared".
 An *undocumented* timeout is still a plain ERROR and still fails.
 
+## Per-lemma budget (`--lemma-timeout`)
+
+`crates/tamarin-prover/tests/lemma_timeout.rs` (5 end-to-end cases) and the
+`lemma_timeout_*` cases in `crates/tamarin-prover/src/cli_tests.rs` (4 unit
+cases) pin the flag. Like `--state-audit` it is a ZKSec-branch addition with no
+upstream implementation, so there is no oracle side: what the tests pin is the
+contract a consumer depends on.
+
+The budget used throughout is `--lemma-timeout=0` — a budget of zero seconds,
+already spent when the search starts. A wall-clock fixture ("a lemma that takes
+longer than 2s") would be flaky by construction and would get flakier as the
+prover gets faster; `=0` makes the cut deterministic and machine-independent
+while still exercising the whole path, flag through guard through verdict
+through audit outcome through exit code.
+
+The four properties pinned:
+
+1. absent, the flag changes nothing — an ample budget must reproduce the
+   unbudgeted verdicts exactly, which is what keeps the default HS-faithful;
+2. a spent budget reports `analysis incomplete`, never a verdict, so a lemma
+   whose search did not finish cannot be read as decided either way;
+3. the run continues past a cut lemma and still reports the rest — the reason
+   the flag exists;
+4. under `--state-audit` a cut lemma is `incomplete` and the process exits 3,
+   keeping "inconclusive" distinguishable from the 2 that means "falsified".
+
+`scripts/state_audit_gate.sh` is unaffected: the Haskell fork has no
+`--lemma-timeout`, so the gate never passes one and both sides run unbounded.
+
 ## Cross-fork gate (`--state-audit`)
 
 ```bash

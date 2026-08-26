@@ -1993,6 +1993,24 @@ impl TheoryPipeline<'_> {
                 // HS does NOT print a per-lemma "proving lemma X ..."
                 // marker; the only progress lines are the `[Theory X]
                 // ...` set above.  Stay quiet here for HS-faithful stderr.
+                // `--lemma-timeout=SECONDS`: cap THIS lemma's search.  The
+                // guard is thread-scoped and RAII, which is what this call
+                // site needs — lemmas are proved under a rayon `par_iter`, so
+                // the process-global `TAM_PROVE_DEADLINE_MS` env var would let
+                // one lemma's budget truncate a sibling running concurrently
+                // on another worker (see `ProofDeadlineGuard`'s own warning).
+                // Held across the prove call below and dropped straight after,
+                // restoring the previous cap.
+                //
+                // Only target lemmas get a budget: the non-target arm replays
+                // a stored skeleton without searching, so there is nothing to
+                // cut short.  Absent the flag no guard is installed at all and
+                // the search is unbounded, which is the HS-faithful default.
+                let _lemma_deadline = self.args.lemma_timeout.filter(|_| is_target).map(|secs| {
+                    tamarin_theory::constraint::solver::search::ProofDeadlineGuard::set_ms(
+                        u64::from(secs).saturating_mul(1_000),
+                    )
+                });
                 let outcome = if is_target {
                     tamarin_theory::prove::prove_lemma_in_session(
                         &session,

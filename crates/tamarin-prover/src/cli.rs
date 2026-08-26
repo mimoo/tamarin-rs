@@ -39,6 +39,11 @@
 //! `--processors`, `--maude-processes`, `--data-dir`) take ordinary clap
 //! values: `=`, attached, or space-separated.
 //!
+//! `--lemma-timeout=SECONDS` is a ZKSec-branch addition with no counterpart in
+//! either the pristine submodule or our Haskell fork: HS has no per-lemma
+//! wall-clock budget.  It takes an ordinary `=`-only clap value and is `global`
+//! like `--bound`, the other search-cutting flag.  See [`crate::run`].
+//!
 //! `--state-audit` is a ZKSec-branch addition with no counterpart in the
 //! pristine submodule; it follows the `flagOpt` shape our Haskell fork gives
 //! it (`=`-only, bare value `state-audit.json`) so the two binaries take the
@@ -135,6 +140,13 @@ pub struct Args {
     // Theory-load options.
     pub stop_on_trace: Option<StopOnTrace>,
     pub bound: Option<u32>,
+    /// `--lemma-timeout=SECONDS` — per-lemma wall-clock budget. A lemma whose
+    /// search is still running when the budget expires is cut short and
+    /// reported `analysis incomplete` instead of blocking the run; the
+    /// remaining lemmas are proved normally. `None` (the default) is
+    /// unbounded, which is the HS-faithful behaviour. See
+    /// [`crate::run`] for where the budget is installed.
+    pub lemma_timeout: Option<u32>,
     pub heuristic: Option<String>,
     pub partial_evaluation: Option<PartialEval>,
     pub defines: Vec<String>,
@@ -234,6 +246,13 @@ struct LoadOpts {
     #[arg(short = 'b', long, global = true, num_args = 0..=1, require_equals = true,
           default_missing_value = "5", value_name = "N")]
     bound: Option<u32>,
+
+    /// Give each lemma at most SECONDS of proof search; one that overruns is
+    /// reported `analysis incomplete` and the run continues (absent: no
+    /// budget)
+    #[arg(long = "lemma-timeout", global = true, require_equals = true,
+          value_name = "SECONDS")]
+    lemma_timeout: Option<u32>,
 
     /// Goal-ranking sequence; overrides the theory's own heuristic
     /// (without a value: `s`, the smart ranking)
@@ -583,6 +602,7 @@ pub fn parse_args(raw: &[String]) -> Result<Args, clap::Error> {
         },
         stop_on_trace: cli.load.stop_on_trace,
         bound: cli.load.bound,
+        lemma_timeout: cli.load.lemma_timeout,
         heuristic: cli.load.heuristic,
         partial_evaluation: cli.load.partial_evaluation,
         defines: cli.load.defines,
