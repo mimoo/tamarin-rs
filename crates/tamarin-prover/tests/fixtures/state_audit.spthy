@@ -1,0 +1,35 @@
+theory State_Audit
+
+begin
+
+rule Initialize:
+  [ Fr(~state) ]
+  --[ Initialized(~state) ]->
+  [ Live(~state) ]
+
+rule Transition:
+  [ Live(state) ]
+  --[ Transitioned(state) ]->
+  [ ]
+
+lemma transition_is_executable:
+  exists-trace
+  "Ex state #i. Transitioned(state)@i"
+
+/* Deliberately false: no transition emits this action. */
+lemma missing_transition_witness:
+  exists-trace
+  "Ex state #i. ImpossibleTransition(state)@i"
+
+lemma transitioned_state_was_initialized:
+  all-traces
+  "All state #i.
+     Transitioned(state)@i
+     ==> (Ex #j. Initialized(state)@j & #j < #i)"
+
+/* Deliberately false: the state transition is reachable. */
+lemma transition_is_unreachable:
+  all-traces
+  "All state #i. Transitioned(state)@i ==> not (state = state)"
+
+end

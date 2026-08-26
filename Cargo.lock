@@ -1197,6 +1197,7 @@ dependencies = [
  "clap",
  "mimalloc",
  "rayon",
+ "serde_json",
  "tamarin-accountability",
  "tamarin-parser",
  "tamarin-sapic",

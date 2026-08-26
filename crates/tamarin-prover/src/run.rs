@@ -138,34 +138,45 @@ fn format_lemma_summary_line(r: &LemmaResult) -> String {
     } else {
         "all-traces"
     };
-    let body = match &r.verdict {
+    format!(
+        "{} ({}): {} ({} steps)",
+        r.name,
+        quantifier,
+        proof_status_text(r),
+        r.proof_steps
+    )
+}
+
+/// HS `showProofStatus` (Theory/Proof.hs:1104-1112) — the verdict phrase
+/// alone, without the ` (N steps)` suffix `prettyClosedSummary` appends.
+///
+/// Split out of [`format_lemma_summary_line`] so the `--state-audit` report
+/// can carry the same phrase in its `prover_status` field; the summary line's
+/// bytes are unchanged.
+pub fn proof_status_text(r: &LemmaResult) -> String {
+    match &r.verdict {
         // HS `showProofStatus` (Theory/Proof.hs:1105-1108): a falsified
         // exists-trace lemma is a `CompleteProof` of `ExistsSomeTrace`
         // ("falsified - no trace found"), whereas a falsified all-traces
         // lemma is a `TraceFound` for `ExistsNoTrace` ("falsified - found
         // trace").  The wording therefore depends on the quantifier.
-        LemmaVerdict::Falsified if r.exists_trace => {
-            format!("falsified - no trace found ({} steps)", r.proof_steps)
-        }
-        LemmaVerdict::Falsified => format!("falsified - found trace ({} steps)", r.proof_steps),
-        LemmaVerdict::Verified => format!("verified ({} steps)", r.proof_steps),
+        LemmaVerdict::Falsified if r.exists_trace => "falsified - no trace found".to_string(),
+        LemmaVerdict::Falsified => "falsified - found trace".to_string(),
+        LemmaVerdict::Verified => "verified".to_string(),
         LemmaVerdict::Analyzed | LemmaVerdict::Skipped | LemmaVerdict::Filtered => {
-            format!("analysis incomplete ({} steps)", r.proof_steps)
+            "analysis incomplete".to_string()
         }
         // HS `showProofStatus _ UnfinishableProof` (Theory/Proof.hs:1104-1112, see line 1109).
-        LemmaVerdict::Unfinishable => format!(
-            "analysis cannot be finished (reducible operators in subterms) ({} steps)",
-            r.proof_steps
-        ),
-        // HS `showProofStatus _ UndeterminedProof` (Theory/Proof.hs:1104-1112, see line 1111).
-        LemmaVerdict::Undetermined => format!("analysis undetermined ({} steps)", r.proof_steps),
-        // HS `showProofStatus _ InvalidatedProof` (Theory/Proof.hs:1104-1112, see line 1112).
-        LemmaVerdict::Invalidated => {
-            format!("proof has been invalidated ({} steps)", r.proof_steps)
+        LemmaVerdict::Unfinishable => {
+            "analysis cannot be finished (reducible operators in subterms)".to_string()
         }
-    };
-    format!("{} ({}): {}", r.name, quantifier, body)
+        // HS `showProofStatus _ UndeterminedProof` (Theory/Proof.hs:1104-1112, see line 1111).
+        LemmaVerdict::Undetermined => "analysis undetermined".to_string(),
+        // HS `showProofStatus _ InvalidatedProof` (Theory/Proof.hs:1104-1112, see line 1112).
+        LemmaVerdict::Invalidated => "proof has been invalidated".to_string(),
+    }
 }
+
 
 /// The verdict a whole-tree `ProofStatus` fold means for a lemma of the given
 /// quantifier.
@@ -944,14 +955,19 @@ fn io_exception_reason(e: &std::io::Error) -> String {
 /// directories, then write `body` VERBATIM.  Neither step is guarded there,
 /// so a failure escapes as the [`write_io_exception`] text — returned here for
 /// the caller to report through [`ghc_exception`].
-fn write_file_with_dirs(path: &str, body: &str) -> Result<(), String> {
+fn ensure_parent_dir(path: &str) -> Result<(), String> {
     if let Some(parent) = std::path::Path::new(path).parent()
         && !parent.as_os_str().is_empty()
     {
-        create_dirs(parent).map_err(|(dir, e)| {
+        return create_dirs(parent).map_err(|(dir, e)| {
             write_io_exception(&dir.to_string_lossy(), "createDirectory", &e)
-        })?;
+        });
     }
+    Ok(())
+}
+
+fn write_file_with_dirs(path: &str, body: &str) -> Result<(), String> {
+    ensure_parent_dir(path)?;
     fs::write(path, body).map_err(|e| write_io_exception(path, "withFile", &e))
 }
 
@@ -1055,7 +1071,26 @@ fn trace_output_label(theory_name: &str, lemma_name: &str, path: &[String]) -> S
 /// retention, the per-lemma collection in the prove loop, and
 /// [`write_output_traces`] itself.
 fn wants_trace_output(args: &Args) -> bool {
-    args.trace_dot.is_some() || args.trace_json.is_some()
+    // `--state-audit` defaults a JSON trace target on (see
+    // [`audit_trace_target`]) so a reported counterexample always has a
+    // serialised trace to point at — it therefore needs the same
+    // solved-`System` retention as an explicit `--output-json`.
+    args.trace_dot.is_some() || args.trace_json.is_some() || args.state_audit.is_some()
+}
+
+/// The JSON trace target for `in_file`: an explicit `--output-json` when
+/// given, otherwise — under `--state-audit` only — one derived from the
+/// report path and the theory's base name, so the files of a multi-theory
+/// run do not overwrite each other's traces.
+///
+/// Mirrors the Haskell fork's `auditTraceTarget`.
+fn audit_trace_target(args: &Args, in_file: &str) -> Option<String> {
+    if let Some(explicit) = &args.trace_json {
+        return Some(explicit.clone());
+    }
+    args.state_audit
+        .as_deref()
+        .map(|audit_file| crate::state_audit::default_trace_target(audit_file, in_file))
 }
 
 /// HS `outputTraces`' two writers (Batch.hs:262-272), run once per input file
@@ -1068,7 +1103,11 @@ fn wants_trace_output(args: &Args) -> bool {
 /// graph, not the total output (HS's DOT side is a lazily-consumed
 /// `writeFile`; its JSON side materialises the document, which the port
 /// need not reproduce — the bytes are identical either way).
-fn write_output_traces(args: &Args, traces: Vec<(String, System)>) -> Result<(), String> {
+fn write_output_traces(
+    args: &Args,
+    json_target: Option<&str>,
+    traces: Vec<(String, System)>,
+) -> Result<(), String> {
     use std::io::Write;
     use tamarin_theory::constraint::system::graph::RenderSystem;
     let opts = trace_graph_options();
@@ -1090,7 +1129,7 @@ fn write_output_traces(args: &Args, traces: Vec<(String, System)>) -> Result<(),
         }
         w.flush().map_err(|e| io(&e))?;
     }
-    if let Some(p) = &args.trace_json {
+    if let Some(p) = json_target {
         // `sequentsToJSONPretty graphOptions labelledSystems` — one document
         // for all graphs; an empty list is `{"graphs": []}`.  Batch does NOT
         // pre-abbreviate the systems (that is the web proof route only), so
@@ -2440,38 +2479,61 @@ fn run_batch(args: &Args) -> Result<i32, RunError> {
                     // It precedes the theory render, matching HS's force order: the
                     // write is an `IO` action inside `processThy`, while the doc is
                     // rendered later in `Batch.hs`'s output phase.
-                    if wants_trace_output(args)
-                        && let Err(io) = write_output_traces(args, closed.trace_systems)
-                    {
-                        return Ok(ghc_exception(&io));
+                    if wants_trace_output(args) {
+                        let json_target = audit_trace_target(args, in_file);
+                        // A DERIVED audit target can name a directory nothing
+                        // has created yet, and HS's audit mode
+                        // `createDirectoryIfMissing True`s it.  An explicit
+                        // `--output-json` keeps upstream's unguarded write, so
+                        // a missing directory there is still its IOException.
+                        if args.trace_json.is_none()
+                            && let Some(t) = &json_target
+                            && let Err(io) = ensure_parent_dir(t)
+                        {
+                            return Ok(ghc_exception(&io));
+                        }
+                        if let Err(io) =
+                            write_output_traces(args, json_target.as_deref(), closed.trace_systems)
+                        {
+                            return Ok(ghc_exception(&io));
+                        }
                     }
-                    // Build the HS-faithful theory pretty-print body.  This replaces
-                    // the verbatim source dump with HS's `prettyClosedTheory`
-                    // output shape — re-rendered signature, rules with `(modulo E)`
-                    // prefix and AC-variant comments, lemmas with inline guarded
-                    // formula and proof body, wellformedness block, and
-                    // Generated-from footer.
-                    let wf_block = tamarin_theory::pretty_theory::format_wf_block(&st.wf_report);
-                    let body = tamarin_theory::pretty_theory::pretty_closed_theory(
-                        &st.elaborated,
-                        &closed.proved_lemmas,
-                        &wf_block,
-                        &build_info,
-                    );
-                    // HS normal mode: `writeOutput` is true whenever `-o`/`-O` was
-                    // given (Batch.hs:168), and a `mkOutPath` miss — `-o=` with no
-                    // `-O` — `die`s with this exact line (Batch.hs:119-123) instead
-                    // of falling back to stdout: markers printed, stdout empty, rc 1.
-                    // (HS processes every file before dying; with several input
-                    // files this port dies after the first, an accepted divergence —
-                    // the condition is argv-constant, so no file output differs.)
-                    if (args.output_file.is_some() || args.output_dir.is_some())
-                        && out_path_for(args, in_file).is_none()
-                    {
-                        return Ok(missing_output_path());
-                    }
-                    if let Err(io) = emit_output(args, in_file, &body) {
-                        return Ok(ghc_exception(&io));
+                    // `--state-audit` is a COMPACT mode: the Haskell fork's
+                    // `compactOutputMode` renders `Pretty.emptyDoc` for both
+                    // the closed theory and the summary, and its audit branch
+                    // runs before the `writeOutput` one — so `-o`/`-O` are
+                    // inert here and the expensive `prettyClosedTheory` is
+                    // never built.  The report replaces both.
+                    if args.state_audit.is_none() {
+                        // Build the HS-faithful theory pretty-print body.  This replaces
+                        // the verbatim source dump with HS's `prettyClosedTheory`
+                        // output shape — re-rendered signature, rules with `(modulo E)`
+                        // prefix and AC-variant comments, lemmas with inline guarded
+                        // formula and proof body, wellformedness block, and
+                        // Generated-from footer.
+                        let wf_block =
+                            tamarin_theory::pretty_theory::format_wf_block(&st.wf_report);
+                        let body = tamarin_theory::pretty_theory::pretty_closed_theory(
+                            &st.elaborated,
+                            &closed.proved_lemmas,
+                            &wf_block,
+                            &build_info,
+                        );
+                        // HS normal mode: `writeOutput` is true whenever `-o`/`-O` was
+                        // given (Batch.hs:168), and a `mkOutPath` miss — `-o=` with no
+                        // `-O` — `die`s with this exact line (Batch.hs:119-123) instead
+                        // of falling back to stdout: markers printed, stdout empty, rc 1.
+                        // (HS processes every file before dying; with several input
+                        // files this port dies after the first, an accepted divergence —
+                        // the condition is argv-constant, so no file output differs.)
+                        if (args.output_file.is_some() || args.output_dir.is_some())
+                            && out_path_for(args, in_file).is_none()
+                        {
+                            return Ok(missing_output_path());
+                        }
+                        if let Err(io) = emit_output(args, in_file, &body) {
+                            return Ok(ghc_exception(&io));
+                        }
                     }
                 }
                 closed.results
@@ -2586,6 +2648,41 @@ fn run_batch(args: &Args) -> Result<i32, RunError> {
                 println!("{}", doc);
             }
         }
+    } else if let Some(audit_file) = &args.state_audit {
+        // ZKSec `--state-audit`: the report REPLACES the `summary of
+        // summaries:` block (the Haskell fork's `compactOutputMode` renders
+        // it as `Pretty.emptyDoc`), and its verdict decides the exit code.
+        let trace_files: Vec<Option<String>> = file_results
+            .iter()
+            .map(|f| audit_trace_target(args, &f.in_file))
+            .collect();
+        // HS `auditClosedTheory` filters with `lemmaSelector opts`, so the
+        // audit reports on exactly the lemmas `--prove=`/`--lemma=` selected —
+        // the prove loop leaves the others' stored `sorry` proofs in place and
+        // they must not read as "inconclusive".
+        let tally = crate::state_audit::tally(&opts.lemma_names, &file_results);
+        let report =
+            crate::state_audit::report(&opts.lemma_names, &file_results, &trace_files, &tally);
+        if let Err(io) = ensure_parent_dir(audit_file) {
+            return Ok(ghc_exception(&io));
+        }
+        // `BL.writeFile` on the HS side — its IOException names
+        // `withBinaryFile`.
+        let body = serde_json::to_string_pretty(&report)
+            .expect("the report is built from owned strings and numbers — it always serialises");
+        if let Err(e) = fs::write(audit_file, format!("{body}\n")) {
+            return Ok(ghc_exception(&write_io_exception(
+                audit_file,
+                "withBinaryFile",
+                &e,
+            )));
+        }
+        println!("{}", crate::state_audit::headline(&tally));
+        for line in crate::state_audit::diagnostic_lines(&opts.lemma_names, &file_results) {
+            println!("{}", line);
+        }
+        println!("state audit report: {}", audit_file);
+        return Ok(crate::state_audit::exit_code(&tally));
     } else {
         print_overall_summary(&file_results, opts.prove_mode);
     }
@@ -3082,7 +3179,12 @@ mod tests {
         ])
         .expect("parse");
 
-        write_output_traces(&a, Vec::new()).expect("empty write");
+        // Resolved through `audit_trace_target`, so this also pins that an
+        // explicit `--output-json` wins over any audit-derived default.
+        let target = audit_trace_target(&a, "x.spthy");
+        assert_eq!(target.as_deref(), Some(json.display().to_string().as_str()));
+
+        write_output_traces(&a, target.as_deref(), Vec::new()).expect("empty write");
         assert_eq!(fs::read_to_string(&dot).expect("dot file"), "");
         assert_eq!(
             fs::read_to_string(&json).expect("json file"),
@@ -3091,6 +3193,7 @@ mod tests {
 
         write_output_traces(
             &a,
+            target.as_deref(),
             vec![
                 ("a".to_string(), System::empty()),
                 ("b".to_string(), System::empty()),

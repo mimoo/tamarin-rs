@@ -606,6 +606,37 @@ today's ledger that is 23 rows (pe 19, json 3, module 1). Read `verdict=OK
 UNCOMPARED=19` as "the rows it compared agree, and 19 were not compared".
 An *undocumented* timeout is still a plain ERROR and still fails.
 
+## Cross-fork gate (`--state-audit`)
+
+```bash
+HS_PATH=<the Haskell fork's binary> scripts/state_audit_gate.sh          # the in-repo fixture
+HS_PATH=... CORPUS=<file list> scripts/state_audit_gate.sh               # real models
+```
+
+The one gate whose reference side is NOT the pristine oracle. `--state-audit`
+is a ZKSec-branch addition, so upstream has no implementation to compare
+against; the reference is our **Haskell fork's** build of the same mode, and
+`HS_PATH` must point at it. A pristine binary has no such flag, and the gate
+exits 2 saying so rather than reporting every file as a DIFF.
+
+It compares what a consumer actually reads — the `summary` block, every
+lemma's name/quantifier/prover_status/audit_outcome/steps, and the process
+exit code. Not compared: `processing_time_seconds` (wall clock is the point of
+the port), the run-local `input_file`/`trace_file` paths, and the serialised
+bytes. Object-key order is not part of the schema (aeson does not preserve the
+written order, `serde_json` sorts), so both sides go through a JSON parser
+rather than a text diff.
+
+`SKIP_TIMEOUT` is the status to watch: a run that produced no verdict is not a
+verdict that happened to match, so it fails the gate rather than counting as
+agreement.
+
+The schema, exit codes and console lines are pinned without a Haskell binary
+by `crates/tamarin-prover/tests/state_audit.rs` (9 end-to-end cases) and
+`crates/tamarin-prover/src/state_audit_tests.rs` (14 unit cases), so
+`cargo test` covers the mode on a box that has no Haskell toolchain; this gate
+is what confirms the two forks still agree.
+
 ## CI reference gate
 
 ```bash
@@ -898,6 +929,7 @@ exits 2 rather than running with a private fallback.
 | `web_parity.sh` (+ `web_crawl.py`, `web_normalize.py`, `web_diff.py`) | interactive-mode gate |
 | `pane_byte_check.sh` | byte-exact pane HTML vs the web cache; file list required |
 | `rs_vs_rs_diff.sh` / `triage_diff_vs_hs.sh` | refactor-inertness sweep + 3-way triage |
+| `state_audit_gate.sh` | `--state-audit` report + rc vs the HASKELL FORK (not the pristine oracle) |
 
 **Data files**
 

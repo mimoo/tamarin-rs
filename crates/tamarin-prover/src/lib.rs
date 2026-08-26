@@ -8,6 +8,7 @@
 pub mod cli;
 mod probe;
 pub mod run;
+pub mod state_audit;
 
 pub use cli::{parse_args, Args};
 pub use run::run;

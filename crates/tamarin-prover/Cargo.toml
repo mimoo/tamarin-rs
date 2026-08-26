@@ -27,6 +27,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 mimalloc = { version = "0.1", default-features = false }
 rayon = { workspace = true }
 clap = { workspace = true }
+# `--state-audit` report serialisation only — no parity-gated output goes
+# through it (see `src/state_audit.rs`).  Already in the graph via
+# tamarin-server, so this costs no extra build.
+serde_json = { workspace = true }
 
 [dev-dependencies]
 tamarin-test-support = { workspace = true }

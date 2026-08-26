@@ -39,6 +39,11 @@
 //! `--processors`, `--maude-processes`, `--data-dir`) take ordinary clap
 //! values: `=`, attached, or space-separated.
 //!
+//! `--state-audit` is a ZKSec-branch addition with no counterpart in the
+//! pristine submodule; it follows the `flagOpt` shape our Haskell fork gives
+//! it (`=`-only, bare value `state-audit.json`) so the two binaries take the
+//! same argv.  See [`crate::state_audit`].
+//!
 //! Loader and tool flags are `global`, so they work before or after a
 //! subcommand name (HS's interactive mode shares the loader flag set);
 //! the interactive web flags are scoped to their command, and the
@@ -177,6 +182,14 @@ pub struct Args {
     pub output_module: Option<String>,
     pub trace_json: Option<String>,
     pub trace_dot: Option<String>,
+
+    /// `--state-audit[=FILE]` — the ZKSec state-transition audit mode: prove
+    /// the selected lemmas, write the report to FILE instead of dumping the
+    /// closed theory, and exit 0/2/3 on the audit verdict.  A bare
+    /// `--state-audit` records `state-audit.json`, matching the Haskell
+    /// fork's `flagOpt` default.  Implies `--prove` (see
+    /// [`Args::prove_mode`]).
+    pub state_audit: Option<String>,
 
     // Tool paths.
     pub maude_path: Option<String>,
@@ -391,6 +404,13 @@ struct BatchOpts {
     /// Write DOT graphs of every solved constraint system to FILE
     #[arg(long = "output-dot", alias = "od", value_name = "FILE")]
     trace_dot: Option<String>,
+
+    /// Prove the selected lemmas, write a state-transition audit report to
+    /// FILE, and exit 2 when a selected property is falsified (without a
+    /// value: `state-audit.json`)
+    #[arg(long = "state-audit", num_args = 0..=1, require_equals = true,
+          default_missing_value = "state-audit.json", value_name = "FILE")]
+    state_audit: Option<String>,
 }
 
 /// `interactive`-only web flags.
@@ -532,6 +552,7 @@ pub fn parse_args(raw: &[String]) -> Result<Args, clap::Error> {
             (cli.batch.output_module.is_some(), "-m/--output-module"),
             (cli.batch.trace_json.is_some(), "--output-json"),
             (cli.batch.trace_dot.is_some(), "--output-dot"),
+            (cli.batch.state_audit.is_some(), "--state-audit"),
         ]
         .iter()
         .find_map(|(given, name)| given.then_some(*name));
@@ -544,7 +565,12 @@ pub fn parse_args(raw: &[String]) -> Result<Args, clap::Error> {
     }
 
     let mut args = Args {
-        prove_mode: !cli.load.prove.is_empty(),
+        // `--state-audit` implies `--prove`, mirroring the Haskell fork's
+        // `proveMode = argExists "prove" as || argExists "stateAudit" as`
+        // (TheoryLoader.hs).  `lemma_names` is deliberately NOT extended:
+        // with no `--prove=`/`--lemma=` the empty filter already selects
+        // every lemma.
+        prove_mode: !cli.load.prove.is_empty() || cli.batch.state_audit.is_some(),
         lemma_names: {
             // HS `lemmaNames = findArg "prove" as ++ findArg "lemma" as`
             // (TheoryLoader.hs:326).  `addArg` PREPENDS each occurrence to
@@ -584,6 +610,7 @@ pub fn parse_args(raw: &[String]) -> Result<Args, clap::Error> {
         output_module: cli.batch.output_module,
         trace_json: cli.batch.trace_json,
         trace_dot: cli.batch.trace_dot,
+        state_audit: cli.batch.state_audit,
         maude_path: cli.tools.maude_path,
         dot_path: cli.tools.dot_path,
         json_path: cli.tools.json_path,

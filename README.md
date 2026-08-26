@@ -326,6 +326,45 @@ refined sources are computed once and shared across lemmas.
 - **Subcommands:** `interactive` (HTTP server), `variants` (DH/BP
   intruder-rule variants dump), `test` (install self-check).
 
+## State-transition audit mode
+
+`--state-audit` is a ZKSec-branch addition — it has no counterpart in
+upstream Tamarin. It proves the selected lemmas and writes one structured
+result per lemma instead of dumping the closed theory, for auditing security
+properties over on-chain state transitions in CI:
+
+```sh
+tamarin-rs --state-audit=state-audit.json --quit-on-warning model.spthy
+```
+
+`--state-audit` implies `--prove`, replaces the theory dump and the
+`summary of summaries:` block with the report, and classifies each lemma by
+what the result MEANS rather than by the raw prover verdict — the same solved
+trace is a counterexample to an `all-traces` safety property and a witness for
+an `exists-trace` executability one:
+
+- `property_verified`: an `all-traces` safety property was proved;
+- `counterexample`: an `all-traces` safety property was falsified by a trace;
+- `witness_found`: an `exists-trace` executability or attack witness exists;
+- `no_witness`: an `exists-trace` property was conclusively falsified;
+- `incomplete`, `undetermined`, `unfinishable`, `invalidated`, `error`: the
+  audit established nothing.
+
+The process exits `0` when every selected lemma holds, `2` when a selected
+lemma is falsified, `3` for an otherwise inconclusive audit, and `1` for a run
+that failed outright. `--prove` / `--lemma` narrow the audit exactly as they
+narrow the prover; a lemma outside the filter is absent from the report rather
+than reported as inconclusive. Each theory also gets a JSON trace file (named
+in its `trace_file` field) so a reported counterexample has a trace to point
+at; an explicit `--output-json` overrides the derived path.
+
+The mode mirrors the `--state-audit` of our Haskell fork so the two binaries
+emit the same schema and the same exit codes;
+`scripts/state_audit_gate.sh` runs both over the same theories and compares.
+Object-key ORDER is not part of that schema — aeson does not preserve the
+written order and `serde_json` sorts — so compare the two through a JSON
+reader (`jq -S`), never byte-for-byte.
+
 ## Not yet ported
 
 - **`diff(...)` / `--diff`** — observational-equivalence mode.

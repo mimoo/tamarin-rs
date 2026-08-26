@@ -540,6 +540,50 @@ fn trace_output_flags() {
     assert_eq!(a.trace_dot.as_deref(), Some("t.dot"));
 }
 
+/// `--state-audit` follows the `flagOpt` shape our Haskell fork gives it:
+/// `=`-only, and a bare flag records the same `state-audit.json` default the
+/// Haskell binary does, so the two take the same argv.
+#[test]
+fn state_audit_flag() {
+    let a = parse(&["--state-audit=report.json", "x.spthy"]);
+    assert_eq!(a.state_audit.as_deref(), Some("report.json"));
+
+    let a = parse(&["--state-audit", "x.spthy"]);
+    assert_eq!(a.state_audit.as_deref(), Some("state-audit.json"));
+    // `=`-only: the detached token stayed a positional input file.
+    assert_eq!(a.in_files, vec!["x.spthy"]);
+
+    // Last-occurrence-wins, like every other scalar flag.
+    let a = parse(&["--state-audit=a.json", "--state-audit=b.json", "x.spthy"]);
+    assert_eq!(a.state_audit.as_deref(), Some("b.json"));
+}
+
+/// The mode implies `--prove` (HS fork: `proveMode = argExists "prove" ||
+/// argExists "stateAudit"`) — an audit of unproved `sorry` placeholders
+/// would report nothing.  It must NOT widen the lemma filter: an empty
+/// `lemma_names` already selects every lemma, and appending to it would
+/// break `--lemma` narrowing.
+#[test]
+fn state_audit_implies_prove_without_touching_the_lemma_filter() {
+    let a = parse(&["--state-audit=r.json", "x.spthy"]);
+    assert!(a.prove_mode);
+    assert!(a.lemma_names.is_empty());
+
+    let a = parse(&["--state-audit=r.json", "--lemma=wanted", "x.spthy"]);
+    assert!(a.prove_mode);
+    assert_eq!(a.lemma_names, vec!["wanted"]);
+}
+
+/// It is a batch-mode flag: clap would accept it before a subcommand word
+/// and then silently drop it, so the combination is rejected instead.
+#[test]
+fn state_audit_conflicts_with_a_subcommand() {
+    assert_eq!(
+        parse_err(&["--state-audit=r.json", "interactive"]).kind(),
+        clap::error::ErrorKind::ArgumentConflict
+    );
+}
+
 // =========================================================================
 // Boolean flags
 // =========================================================================
