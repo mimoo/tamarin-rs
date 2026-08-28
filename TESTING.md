@@ -635,36 +635,60 @@ The four properties pinned:
 `scripts/state_audit_gate.sh` is unaffected: the Haskell fork has no
 `--lemma-timeout`, so the gate never passes one and both sides run unbounded.
 
-## Cross-fork gate (`--state-audit`)
+## Cross-fork gate (the ZKSec report modes)
 
 ```bash
-HS_PATH=<the Haskell fork's binary> scripts/state_audit_gate.sh          # the in-repo fixture
-HS_PATH=... CORPUS=<file list> scripts/state_audit_gate.sh               # real models
+HS_PATH=<the Haskell fork's binary> scripts/zksec_report_gate.sh          # both modes, in-repo fixtures
+HS_PATH=... MODE=proof-diagnostics scripts/zksec_report_gate.sh           # one mode
+HS_PATH=... CORPUS=<file list> scripts/zksec_report_gate.sh               # real models
 ```
 
 The one gate whose reference side is NOT the pristine oracle. `--state-audit`
-is a ZKSec-branch addition, so upstream has no implementation to compare
-against; the reference is our **Haskell fork's** build of the same mode, and
-`HS_PATH` must point at it. A pristine binary has no such flag, and the gate
-exits 2 saying so rather than reporting every file as a DIFF.
+and `--proof-diagnostics` are ZKSec-branch additions, so upstream has no
+implementation to compare against; the reference is our **Haskell fork's**
+build of the same modes, and `HS_PATH` must point at it. A pristine binary has
+neither flag, and the gate exits 2 saying so rather than reporting every file
+as a DIFF.
 
-It compares what a consumer actually reads — the `summary` block, every
-lemma's name/quantifier/prover_status/audit_outcome/steps, and the process
-exit code. Not compared: `processing_time_seconds` (wall clock is the point of
-the port), the run-local `input_file`/`trace_file` paths, and the serialised
-bytes. Object-key order is not part of the schema (aeson does not preserve the
-written order, `serde_json` sorts), so both sides go through a JSON parser
-rather than a text diff.
+It compares what a consumer actually reads — the `summary` block, every audit
+lemma's name/quantifier/prover_status/audit_outcome/steps, every open proof
+state's lemma/path/kind/reason/requested_method/formulas/open_goals/
+applicable_methods/constraint_system, and the process exit code. Not compared:
+`processing_time_seconds` (wall clock is the point of the port), the run-local
+`input_file`/`trace_file` paths, and the serialised bytes. Object-key order is
+not part of the schema (aeson does not preserve the written order,
+`serde_json` sorts), so both sides go through a JSON parser rather than a text
+diff.
 
-`SKIP_TIMEOUT` is the status to watch: a run that produced no verdict is not a
-verdict that happened to match, so it fails the gate rather than counting as
-agreement.
+Three statuses besides MATCH/DIFF, all failing, all naming what actually
+happened rather than implying a report-mode bug:
 
-The schema, exit codes and console lines are pinned without a Haskell binary
-by `crates/tamarin-prover/tests/state_audit.rs` (9 end-to-end cases) and
-`crates/tamarin-prover/src/state_audit_tests.rs` (14 unit cases), so
-`cargo test` covers the mode on a box that has no Haskell toolchain; this gate
-is what confirms the two forks still agree.
+- `SKIP_TIMEOUT` — a run that produced no verdict. Not a verdict that happened
+  to match.
+- `SKIP_NOREPORT` — neither side wrote a report, i.e. both refused the file the
+  same way. This gate passes no per-file flags, so a `--diff` model (or
+  anything else needing them) lands here; agreement on the refusal is not
+  agreement on the mode. A corpus list should hold theories both binaries can
+  load as invoked here.
+- `DIFF_PREEXISTING` — the reports differ AND the plain load of the file
+  already differs between the forks. Both modes read the proof tree the load
+  produces, and the port does not claim byte parity outside
+  `scripts/parity_corpus.txt`; the SAPIC manual-proof theories are not in it,
+  and `sapic/manual-proofs/encWrapDecUnwrap/encwrapdecunwrap_can_unwrap_manual.spthy`
+  really does replay differently (RS keeps a subtree `/* unannotated */` where
+  HS replays it, and mints an extra runtime case). The re-check runs only on a
+  DIFF, so the happy path pays nothing for it.
+
+This gate earns its keep — it is what caught `--proof-diagnostics` rendering
+its `formulas` field flat where HS's `renderDoc . prettyGuarded` wraps, a
+difference invisible on any formula short enough to fit one line and so
+invisible to the fixtures.
+
+The schema, exit codes and console rendering are pinned without a Haskell
+binary by `crates/tamarin-prover/tests/{state_audit,proof_diagnostics}.rs`
+(9 end-to-end cases each) and the two `src/*_tests.rs` unit suites, so
+`cargo test` covers both modes on a box that has no Haskell toolchain; this
+gate is what confirms the two forks still agree.
 
 ## CI reference gate
 
@@ -958,7 +982,7 @@ exits 2 rather than running with a private fallback.
 | `web_parity.sh` (+ `web_crawl.py`, `web_normalize.py`, `web_diff.py`) | interactive-mode gate |
 | `pane_byte_check.sh` | byte-exact pane HTML vs the web cache; file list required |
 | `rs_vs_rs_diff.sh` / `triage_diff_vs_hs.sh` | refactor-inertness sweep + 3-way triage |
-| `state_audit_gate.sh` | `--state-audit` report + rc vs the HASKELL FORK (not the pristine oracle) |
+| `zksec_report_gate.sh` | `--state-audit` / `--proof-diagnostics` report + rc vs the HASKELL FORK (not the pristine oracle) |
 
 **Data files**
 

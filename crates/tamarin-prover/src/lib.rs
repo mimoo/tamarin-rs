@@ -7,6 +7,7 @@
 
 pub mod cli;
 mod probe;
+pub mod proof_diagnostics;
 pub mod run;
 pub mod state_audit;
 

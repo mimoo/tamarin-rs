@@ -1,0 +1,21 @@
+theory Proof_Diagnostics
+
+begin
+
+rule Create:
+  [ Fr(~value) ]
+  --[ Created(~value) ]->
+  [ Out(~value) ]
+
+lemma partial_reachability:
+  exists-trace
+  "Ex value #i. Created(value)@i"
+  by sorry
+
+lemma deliberately_false_secrecy:
+  all-traces
+  "All value #i. Created(value)@i ==> not (Ex #j. K(value)@j)"
+  simplify
+  by solve(!KU('wrong-value') @ #wrong_node)
+
+end

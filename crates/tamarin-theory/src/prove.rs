@@ -1366,6 +1366,40 @@ pub fn check_and_extend_lemma_in_session(
     prove_lemma_in_session_mode(session, lemma_name, proof_bound, false)
 }
 
+/// [`check_and_extend_lemma_in_session`], plus a description of every proof
+/// state the replay left open — the ZKSec `--proof-diagnostics` mode.
+///
+/// The two are one call because the description needs the per-lemma
+/// `ProofContext` that the replay builds and drops: listing the methods
+/// applicable at an open state is a `rankProofMethods` over that exact
+/// context, and rebuilding it afterwards would re-run the lemma's source
+/// saturation for nothing.
+///
+/// Deliberately paired with the CHECK-AND-EXTEND arm only. The mode reports
+/// what a stored proof leaves open, so auto-proving those leaves first would
+/// leave nothing to report; the driver refuses `--prove` for the same reason.
+///
+/// This mirrors [`prove_lemma_in_session_mode`]'s non-auto-prove arm rather
+/// than threading a collect flag through it, so the ordinary prove path
+/// carries no cost — and no branch — for a mode it never runs.
+pub fn check_and_extend_lemma_with_diagnostics(
+    session: &ProverSession,
+    lemma_name: &str,
+    proof_bound: usize,
+) -> Result<(ProofNode, Vec<crate::proof_diagnostics::OpenProofState>), ProveError> {
+    let (lemma, mut ctx, sys) = lemma_context_and_system(session, lemma_name)?;
+    let root = match &lemma.proof {
+        Some(tree) => crate::replay::check_and_extend(&ctx, sys, tree, proof_bound)?,
+        // No stored skeleton. HS runs the close-time `checkAndExtendProver`
+        // pass unconditionally, so a proofless theory must still report one
+        // annotated `sorry` per lemma — "this lemma has no proof" — rather
+        // than reporting nothing at all.
+        None => crate::replay::annotated_sorry_root(sys),
+    };
+    let diagnostics = crate::proof_diagnostics::collect_open_proof_states(&mut ctx, &root)?;
+    Ok((root, diagnostics))
+}
+
 /// Run the from-scratch autoprover on an ARBITRARY start system under
 /// `lemma_name`'s per-lemma `ProofContext` — the web interactive
 /// `autoprove` primitive.

@@ -50,10 +50,11 @@
 //! wall-clock budget.  It takes an ordinary `=`-only clap value and is `global`
 //! like `--bound`, the other search-cutting flag.  See [`crate::run`].
 //!
-//! `--state-audit` is a ZKSec-branch addition with no counterpart in the
-//! pristine submodule; it follows the `flagOpt` shape our Haskell fork gives
-//! it (`=`-only, bare value `state-audit.json`) so the two binaries take the
-//! same argv.  See [`crate::state_audit`].
+//! `--state-audit` and `--proof-diagnostics` are ZKSec-branch additions with
+//! no counterpart in the pristine submodule; both follow the `flagOpt` shape
+//! our Haskell fork gives them (`=`-only, bare values `state-audit.json` /
+//! `proof-diagnostics.json`) so the two binaries take the same argv.  See
+//! [`crate::state_audit`] and [`crate::proof_diagnostics`].
 //!
 //! Loader and tool flags are `global`, so they work before or after a
 //! subcommand name (HS's interactive mode shares the loader flag set);
@@ -208,6 +209,15 @@ pub struct Args {
     pub output_module: Option<String>,
     pub trace_json: Option<String>,
     pub trace_dot: Option<String>,
+
+    /// `--proof-diagnostics[=FILE]` — the ZKSec partial-proof diagnostics
+    /// mode: check the stored proofs WITHOUT auto-proving their `sorry`
+    /// nodes, write every open or invalid proof state to FILE instead of
+    /// dumping the closed theory, and exit 4 if any remain.  A bare
+    /// `--proof-diagnostics` records `proof-diagnostics.json`, matching the
+    /// Haskell fork's `flagOpt` default.  Mutually exclusive with both
+    /// `--state-audit` and `--prove` (see [`parse_args`]).
+    pub proof_diagnostics: Option<String>,
 
     /// `--state-audit[=FILE]` — the ZKSec state-transition audit mode: prove
     /// the selected lemmas, write the report to FILE instead of dumping the
@@ -468,6 +478,13 @@ struct BatchOpts {
     #[arg(long = "state-audit", num_args = 0..=1, require_equals = true,
           default_missing_value = "state-audit.json", value_name = "FILE")]
     state_audit: Option<String>,
+
+    /// Check the supplied partial proofs and report every open or invalid
+    /// proof state to FILE, exiting 4 when any remain (without a value:
+    /// `proof-diagnostics.json`)
+    #[arg(long = "proof-diagnostics", num_args = 0..=1, require_equals = true,
+          default_missing_value = "proof-diagnostics.json", value_name = "FILE")]
+    proof_diagnostics: Option<String>,
 }
 
 /// `interactive`-only web flags.
@@ -610,6 +627,7 @@ pub fn parse_args(raw: &[String]) -> Result<Args, clap::Error> {
             (cli.batch.trace_json.is_some(), "--output-json"),
             (cli.batch.trace_dot.is_some(), "--output-dot"),
             (cli.batch.state_audit.is_some(), "--state-audit"),
+            (cli.batch.proof_diagnostics.is_some(), "--proof-diagnostics"),
         ]
         .iter()
         .find_map(|(given, name)| given.then_some(*name));
@@ -671,6 +689,7 @@ pub fn parse_args(raw: &[String]) -> Result<Args, clap::Error> {
         trace_json: cli.batch.trace_json,
         trace_dot: cli.batch.trace_dot,
         state_audit: cli.batch.state_audit,
+        proof_diagnostics: cli.batch.proof_diagnostics,
         maude_path: cli.tools.maude_path,
         dot_path: cli.tools.dot_path,
         json_path: cli.tools.json_path,

@@ -122,6 +122,24 @@ pub fn pretty_guarded_doublequoted(g: &Guarded) -> String {
     Doc::text("\"").beside(doc).beside(Doc::text("\"")).render()
 }
 
+/// HS `renderDoc . prettyGuarded gf` — the formula rendered STANDALONE
+/// through the HughesPJ machinery, so it wraps at the display width exactly
+/// as HS does.
+///
+/// Distinct from [`pretty_guarded`], which renders flat: that one feeds sites
+/// whose surrounding layout does the breaking (or that want one line), while
+/// this is for a caller that renders the formula on its own and must match
+/// HS's `renderDoc` byte for byte — [`crate::proof_diagnostics`]'s open-state
+/// formula list.  The wrapping is what differs: the two agree on any formula
+/// short enough to fit one line, which is why only a cross-fork comparison on
+/// a long formula caught the distinction.
+///
+/// Also distinct from this module's test-only `pretty_guarded_wrapped`, which
+/// renders at a caller-supplied indent; this one is the bare `renderDoc`.
+pub fn pretty_guarded_rendered(g: &Guarded) -> String {
+    guarded_doc(g).render()
+}
+
 /// HS bare `prettyGuarded gf` (Guarded.hs:824-866) as a Doc — WITHOUT the
 /// lemma path's `doubleQuotes` wrap.  This is what
 /// `prettyNonGraphSystem` renders the `sFormulas` / `sLemmas` /

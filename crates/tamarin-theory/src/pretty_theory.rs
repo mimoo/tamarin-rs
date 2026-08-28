@@ -2158,6 +2158,14 @@ pub(crate) fn render_goal_for_oracle(g: &crate::constraint::constraints::Goal) -
     solve_goal_to_doc(g).render_with(ORACLE_LINE_LENGTH, ORACLE_RIBBON)
 }
 
+/// HS `prettyGoal` (Constraints.hs:273-287) rendered to a string — the goal
+/// alone, without the `// nr: N …` line comment `pretty_system`'s
+/// constraint-system pane appends beside it.  Used by
+/// [`crate::proof_diagnostics`] for the open-goal list of an open proof state.
+pub fn pretty_goal(g: &crate::constraint::constraints::Goal) -> String {
+    solve_goal_to_doc(g).render()
+}
+
 /// Build a `pretty_hpj::Doc` for a non-DisjG `Goal`, mirroring HS
 /// `prettyGoal` (Constraints.hs:273-287).  `<->` = `<+>` (beside-with-
 /// space).  Facts go through `prettyLNFact`'s `nestShort'` wrapping

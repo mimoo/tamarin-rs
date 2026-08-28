@@ -1203,6 +1203,12 @@ struct TheoryLoadOptions {
     parse_only_mode: bool,
     /// HS `precomputeOnlyMode`.
     precompute_only_mode: bool,
+    /// ZKSec `--proof-diagnostics`.  Read by the close path for one reason:
+    /// the prove loop's cheap skip (no `--prove` AND no stored proof) would
+    /// otherwise deprive the mode of the very nodes it reports.  HS has no
+    /// such flag because its `closeTheory` always runs the close-time
+    /// `checkAndExtendProver` pass, which mints those nodes unconditionally.
+    proof_diagnostics_mode: bool,
     /// HS `derivationChecks` with its default already resolved
     /// (`derivDefault = 5`, TheoryLoader.hs:391-393; 0 disables).
     derivation_checks: u32,
@@ -1243,6 +1249,7 @@ fn mk_theory_load_options(args: &Args) -> Result<TheoryLoadOptions, RunError> {
         output_module,
         parse_only_mode: args.parse_only,
         precompute_only_mode: args.precompute_only,
+        proof_diagnostics_mode: args.proof_diagnostics.is_some(),
         derivation_checks: args.derivcheck_timeout.unwrap_or(5),
         ndc_check: !args.no_ndc,
         parameters: tamarin_theory::constraint::solver::sources::IntegerParameters::with_overrides(
@@ -1299,6 +1306,8 @@ struct ClosedOutcome {
     results: Vec<LemmaResult>,
     proved_lemmas: Vec<tamarin_theory::pretty_theory::ProvedLemma>,
     trace_systems: Vec<(String, System)>,
+    /// ZKSec `--proof-diagnostics` only; empty in every other mode.
+    diagnostics: crate::proof_diagnostics::TheoryDiagnostics,
 }
 
 /// One input file's loading state, threaded through the HS-named loading
@@ -1890,8 +1899,14 @@ impl TheoryPipeline<'_> {
         // The modes that skip the prove loop entirely: `--precompute-only`
         // renders stats instead, and a plain load with no stored skeleton to
         // replay has nothing to run.
-        let skips_prove_loop =
-            self.opts.precompute_only_mode || (!prove_anything && !any_stored_proof);
+        // `--proof-diagnostics` needs the loop even on a proofless theory:
+        // the check-and-extend pass turns each lemma's `unproven ()`
+        // placeholder into an ANNOTATED single `sorry` at its start system,
+        // which is exactly the open state to report ("this lemma has no
+        // proof").  The skip below is a Rust-side optimisation — HS runs the
+        // pass unconditionally — so it must not swallow them.
+        let skips_prove_loop = self.opts.precompute_only_mode
+            || (!prove_anything && !any_stored_proof && !self.opts.proof_diagnostics_mode);
 
         let mut results: Vec<LemmaResult> = Vec::new();
         // Mirrors HS's per-lemma proof body for embedding in the
@@ -1902,6 +1917,9 @@ impl TheoryPipeline<'_> {
         // declaration order.  Empty unless `--output-dot`/`--output-json`
         // asked for them.
         let mut trace_systems: Vec<(String, System)> = Vec::new();
+        // ZKSec `--proof-diagnostics`: the open proof states of every lemma
+        // that has any, in declaration order.  Empty in every other mode.
+        let mut diagnostics: crate::proof_diagnostics::TheoryDiagnostics = Vec::new();
 
         if skips_prove_loop {
             results = skipped_results(&self.elaborated, lemma_filter);
@@ -1937,6 +1955,7 @@ impl TheoryPipeline<'_> {
                     .elaborated
                     .lemmas()
                     .any(|lemma| lemma_matches(lemma_filter, &lemma.name));
+            let want_diagnostics = self.opts.proof_diagnostics_mode;
             let cli_heuristic = if has_target {
                 self.cli_heuristic()
             } else {
@@ -1962,6 +1981,7 @@ impl TheoryPipeline<'_> {
                     tamarin_theory::pretty_theory::ProvedLemma,
                     LemmaResult,
                     Vec<(String, System)>,
+                    crate::proof_diagnostics::LemmaDiagnostics,
                 ),
                 RunError,
             > {
@@ -2004,23 +2024,42 @@ impl TheoryPipeline<'_> {
                 // a stored skeleton without searching, so there is nothing to
                 // cut short.  Absent the flag no guard is installed at all and
                 // the search is unbounded, which is the HS-faithful default.
+                // HS `diagnosticsClosedTheory` filters with `lemmaSelector
+                // opts`, so `--lemma=X` narrows the report the way it narrows
+                // the prover.  Decided per lemma rather than at report time so
+                // an excluded lemma never pays for rendering its systems.
+                let collect_diagnostics =
+                    want_diagnostics && lemma_matches(lemma_filter, &lemma_name);
                 let _lemma_deadline = self.args.lemma_timeout.filter(|_| is_target).map(|secs| {
                     tamarin_theory::constraint::solver::search::ProofDeadlineGuard::set_ms(
                         u64::from(secs).saturating_mul(1_000),
                     )
                 });
-                let outcome = if is_target {
+                // `--proof-diagnostics` describes the open states while the
+                // per-lemma ProofContext is still alive, so it takes the
+                // check-and-extend arm's paired entry point.  `is_target` is
+                // always false here — the driver refuses `--prove` with the
+                // mode — so only that arm ever needs the pairing.
+                let outcome = if collect_diagnostics {
+                    tamarin_theory::prove::check_and_extend_lemma_with_diagnostics(
+                        &session,
+                        &lemma_name,
+                        usize::MAX,
+                    )
+                } else if is_target {
                     tamarin_theory::prove::prove_lemma_in_session(
                         &session,
                         &lemma_name,
                         target_bound,
                     )
+                    .map(|root| (root, Vec::new()))
                 } else {
                     tamarin_theory::prove::check_and_extend_lemma_in_session(
                         &session,
                         &lemma_name,
                         usize::MAX,
                     )
+                    .map(|root| (root, Vec::new()))
                 };
                 // HS `systemsWithMetadata` (Batch.hs:274-280) reads the proof
                 // tree of every lemma, so the collection has to happen here —
@@ -2030,7 +2069,7 @@ impl TheoryPipeline<'_> {
                 // `check_and_extend_lemma_in_session`, which is why
                 // `_analyzed` theories carry traces without `--prove`.
                 let mut lemma_traces: Vec<(String, System)> = Vec::new();
-                let root = outcome.map_err(RunError::from)?;
+                let (root, lemma_diagnostics) = outcome.map_err(RunError::from)?;
                 let (verdict, proof_steps, proof_body) = {
                     let steps = count_proof_steps(&root);
                     // HS lemma verdict = `getProofStatus` (Proof.hs)
@@ -2063,12 +2102,16 @@ impl TheoryPipeline<'_> {
                     proof_body,
                 };
                 let lr = LemmaResult {
-                    name: lemma_name,
+                    name: lemma_name.clone(),
                     verdict,
                     proof_steps,
                     exists_trace,
                 };
-                Ok((pl, lr, lemma_traces))
+                let ld = crate::proof_diagnostics::LemmaDiagnostics {
+                    lemma: lemma_name,
+                    states: lemma_diagnostics,
+                };
+                Ok((pl, lr, lemma_traces, ld))
             };
 
             // Fallible theories stay ordered so an oracle/guarded error cannot
@@ -2096,10 +2139,13 @@ impl TheoryPipeline<'_> {
                     .map(|lemma| run_lemma(lemma))
                     .collect::<Result<Vec<_>, RunError>>()?
             };
-            for (pl, lr, tr) in lemma_results {
+            for (pl, lr, tr, ld) in lemma_results {
                 proved_lemmas.push(pl);
                 results.push(lr);
                 trace_systems.extend(tr);
+                if !ld.states.is_empty() {
+                    diagnostics.push(ld);
+                }
             }
         }
 
@@ -2107,6 +2153,7 @@ impl TheoryPipeline<'_> {
             results,
             proved_lemmas,
             trace_systems,
+            diagnostics,
         })
     }
 }
@@ -2116,6 +2163,26 @@ fn run_batch(args: &Args) -> Result<i32, RunError> {
     if args.diff {
         return Err(RunError::Regular(
             "--diff (observational equivalence) is not yet ported to the Rust prover.".to_string(),
+        ));
+    }
+    // The two ZKSec report modes both replace the theory dump with their own
+    // document, and they answer opposite questions — one proves, the other
+    // refuses to.  Same message and same rc 1 as the Haskell fork's `die`,
+    // so a script gets the same answer from either binary.
+    if args.state_audit.is_some() && args.proof_diagnostics.is_some() {
+        return Err(RunError::Regular(
+            "--state-audit and --proof-diagnostics cannot be used together".to_string(),
+        ));
+    }
+    // `--prove` hands the very `sorry` nodes this mode reports to the
+    // autoprover (`replaceSorryProver`), so the combination would report a
+    // complete proof BECAUSE it completed it.  `--lemma` narrows without
+    // proving.
+    if args.proof_diagnostics.is_some() && args.prove_mode {
+        return Err(RunError::Regular(
+            "--proof-diagnostics checks the supplied partial proof; use --lemma to select \
+             lemmas instead of --prove"
+                .to_string(),
         ));
     }
     // `--stop-on-trace` selects HS's `SolutionExtractor` (Theory/Proof.hs:693-694,
@@ -2129,6 +2196,9 @@ fn run_batch(args: &Args) -> Result<i32, RunError> {
         return Err(RunError::Regular("no input files given".to_string()));
     }
     let mut file_results: Vec<FileResult> = Vec::new();
+    // Parallel to `file_results`; empty entries in every mode but
+    // `--proof-diagnostics`.
+    let mut file_diagnostics: Vec<crate::proof_diagnostics::TheoryDiagnostics> = Vec::new();
     // `--parse-only` docs, buffered and printed AFTER the file loop: HS
     // (Batch.hs:91-95) runs `mapM (processThy "") inFiles` to completion
     // BEFORE the `mapM_ (putStrLn . renderDoc) docs` — so a parse error in a
@@ -2471,6 +2541,9 @@ fn run_batch(args: &Args) -> Result<i32, RunError> {
 
         // Per-file summary rows for `file_results`.  Translate mode records
         // skipped rows too, though its output phase never prints a summary.
+        // Filled by the close-and-prove arm below; the translate-only arm
+        // never closes a theory, so it has no proof tree to read.
+        let mut diagnostics: crate::proof_diagnostics::TheoryDiagnostics = Vec::new();
         let results: Vec<LemmaResult> = match translate_module {
             Some(module) => {
                 // HS `translateAndCheckTheory` never closes, never proves
@@ -2563,7 +2636,7 @@ fn run_batch(args: &Args) -> Result<i32, RunError> {
                     // runs before the `writeOutput` one — so `-o`/`-O` are
                     // inert here and the expensive `prettyClosedTheory` is
                     // never built.  The report replaces both.
-                    if args.state_audit.is_none() {
+                    if args.state_audit.is_none() && args.proof_diagnostics.is_none() {
                         // Build the HS-faithful theory pretty-print body.  This replaces
                         // the verbatim source dump with HS's `prettyClosedTheory`
                         // output shape — re-rendered signature, rules with `(modulo E)`
@@ -2595,10 +2668,12 @@ fn run_batch(args: &Args) -> Result<i32, RunError> {
                         }
                     }
                 }
+                diagnostics = closed.diagnostics;
                 closed.results
             }
         };
 
+        file_diagnostics.push(diagnostics);
         file_results.push(FileResult {
             in_file: in_file.clone(),
             out_file: out_path_for(args, in_file),
@@ -2707,6 +2782,38 @@ fn run_batch(args: &Args) -> Result<i32, RunError> {
                 println!("{}", doc);
             }
         }
+    } else if let Some(report_file) = &args.proof_diagnostics {
+        // ZKSec `--proof-diagnostics`: like the audit, the report REPLACES
+        // the theory dump and the `summary of summaries:` block, and its own
+        // verdict decides the exit code.
+        let tally = crate::proof_diagnostics::tally(&file_diagnostics);
+        let report = crate::proof_diagnostics::report(&file_results, &file_diagnostics, &tally);
+        if let Err(io) = ensure_parent_dir(report_file) {
+            return Ok(ghc_exception(&io));
+        }
+        let body = serde_json::to_string_pretty(&report)
+            .expect("the report is built from owned strings and numbers — it always serialises");
+        if let Err(e) = fs::write(report_file, format!("{body}\n")) {
+            return Ok(ghc_exception(&write_io_exception(
+                report_file,
+                "withBinaryFile",
+                &e,
+            )));
+        }
+        println!("{}", crate::proof_diagnostics::headline(&tally));
+        for (file, theory) in file_results.iter().zip(&file_diagnostics) {
+            for lemma in theory {
+                for state in &lemma.states {
+                    for line in
+                        crate::proof_diagnostics::console_lines(&file.in_file, &lemma.lemma, state)
+                    {
+                        println!("{line}");
+                    }
+                }
+            }
+        }
+        println!("proof diagnostics report: {}", report_file);
+        return Ok(crate::proof_diagnostics::exit_code(&tally));
     } else if let Some(audit_file) = &args.state_audit {
         // ZKSec `--state-audit`: the report REPLACES the `summary of
         // summaries:` block (the Haskell fork's `compactOutputMode` renders

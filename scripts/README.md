@@ -301,22 +301,25 @@ walks the RS test harness's ladder because its captures must use the maude
   UNDOCUMENTED timeout is unchanged: plain ERROR, counted into `DIFF/ERROR=n`,
   and the sweep fails.
 
-- **`state_audit_gate.sh`** — the cross-fork gate for `--state-audit`, and
-  the only gate whose reference side is NOT the pristine oracle. The mode is a
-  ZKSec-branch addition, so the reference is our **Haskell fork's** build of
-  it: `HS_PATH` must name that binary, and the gate exits 2 (rather than
-  reporting every file as a DIFF) when the binary it is given has no
-  `--state-audit`. Both sides run over the same theories; it compares the
-  `summary` block, every lemma's name/quantifier/prover_status/audit_outcome/
-  steps, and the process exit code. Deliberately not compared:
+- **`zksec_report_gate.sh`** — the cross-fork gate for the ZKSec report modes
+  (`--state-audit`, `--proof-diagnostics`), and the only gate whose reference
+  side is NOT the pristine oracle. Both modes are ZKSec-branch additions, so
+  the reference is our **Haskell fork's** build of them: `HS_PATH` must name
+  that binary, and the gate exits 2 (rather than reporting every file as a
+  DIFF) when the binary it is given lacks the flag. Both sides run over the
+  same theories in each mode; it compares the whole report bar the fields
+  below, plus the process exit code. Deliberately not compared:
   `processing_time_seconds`, the run-local `input_file`/`trace_file` paths,
   and the serialised bytes — object-key order is not part of the schema
   (aeson does not preserve the written order, `serde_json` sorts), so both
   reports go through a JSON parser rather than a text diff. `SKIP_TIMEOUT` is
   a failing status: a run that reached no verdict is not agreement. Env:
-  `RS_PATH`, `HS_PATH`, `CORPUS` (a file list; default is the in-repo
-  `state_audit.spthy` fixture, whose four lemmas cover all four conclusive
-  outcomes), `FILE_TIMEOUT`, `RESULTS_TSV`.
+  `RS_PATH`, `HS_PATH`, `MODE` (`state-audit` | `proof-diagnostics` | `both`,
+  default `both`), `CORPUS` (a file list; default is the two in-repo fixtures
+  — `state_audit.spthy`, whose four lemmas cover all four conclusive audit
+  outcomes and which carries no stored proof, and `proof_diagnostics.spthy`,
+  which carries a partial proof and a stale `solve(...)` step),
+  `FILE_TIMEOUT`, `RESULTS_TSV`.
 
 ## Web-gate internals (invoked by the gates, rarely by hand)
 

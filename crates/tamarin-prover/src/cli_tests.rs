@@ -584,6 +584,53 @@ fn state_audit_conflicts_with_a_subcommand() {
     );
 }
 
+/// `--proof-diagnostics` takes the same `flagOpt` shape as `--state-audit`,
+/// with its own bare-flag default.
+#[test]
+fn proof_diagnostics_flag() {
+    let a = parse(&["--proof-diagnostics=report.json", "x.spthy"]);
+    assert_eq!(a.proof_diagnostics.as_deref(), Some("report.json"));
+
+    let a = parse(&["--proof-diagnostics", "x.spthy"]);
+    assert_eq!(
+        a.proof_diagnostics.as_deref(),
+        Some("proof-diagnostics.json")
+    );
+    assert_eq!(a.in_files, vec!["x.spthy"]);
+
+    let a = parse(&[
+        "--proof-diagnostics=a.json",
+        "--proof-diagnostics=b.json",
+        "x.spthy",
+    ]);
+    assert_eq!(a.proof_diagnostics.as_deref(), Some("b.json"));
+}
+
+/// Unlike `--state-audit`, this one must NOT imply `--prove`: the mode reads
+/// the proof the file already carries, and proving would fill in the very
+/// `sorry` nodes it exists to report.  `--lemma` still narrows it.
+#[test]
+fn proof_diagnostics_does_not_imply_prove() {
+    let a = parse(&["--proof-diagnostics=r.json", "x.spthy"]);
+    assert!(!a.prove_mode);
+    assert!(a.lemma_names.is_empty());
+
+    let a = parse(&["--proof-diagnostics=r.json", "--lemma=wanted", "x.spthy"]);
+    assert!(!a.prove_mode);
+    assert_eq!(a.lemma_names, vec!["wanted"]);
+}
+
+/// Also a batch-mode flag.  (The `--prove` and `--state-audit` combinations
+/// are refused later, by the run pipeline, so they can `die` with the Haskell
+/// fork's message and rc 1 rather than clap's rc 2.)
+#[test]
+fn proof_diagnostics_conflicts_with_a_subcommand() {
+    assert_eq!(
+        parse_err(&["--proof-diagnostics=r.json", "interactive"]).kind(),
+        clap::error::ErrorKind::ArgumentConflict
+    );
+}
+
 /// `--lemma-timeout` is `=`-only like the other scalar search-cutting flags,
 /// and absent means unbounded — the HS-faithful default, since HS has no
 /// per-lemma wall-clock budget at all.

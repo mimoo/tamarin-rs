@@ -360,10 +360,37 @@ at; an explicit `--output-json` overrides the derived path.
 
 The mode mirrors the `--state-audit` of our Haskell fork so the two binaries
 emit the same schema and the same exit codes;
-`scripts/state_audit_gate.sh` runs both over the same theories and compares.
+`scripts/zksec_report_gate.sh` runs both over the same theories and compares.
 Object-key ORDER is not part of that schema — aeson does not preserve the
 written order and `serde_json` sorts — so compare the two through a JSON
 reader (`jq -S`), never byte-for-byte.
+
+## Partial-proof diagnostics
+
+`--proof-diagnostics` is the other ZKSec-branch report mode. It checks the
+proof text a theory already carries WITHOUT handing its `sorry` nodes to the
+autoprover, and reports every proof state left open:
+
+```sh
+tamarin-rs --proof-diagnostics=proof-diagnostics.json --lemma=my_partial_lemma model.spthy
+```
+
+For each explicit `sorry`, unreplayable step, or lemma with no proof at all it
+records the lemma and proof-tree path, the stored step that failed (when there
+was one), the current guarded formulas and open goals, the proof methods that
+apply at that exact state, and the whole constraint system. The console prints
+all of that but the constraint system; the report file carries everything.
+
+The process exits `0` for a complete checked proof and `4` when proof states
+remain — deliberately neither of the audit's `2`/`3`, so a CI job can tell
+"this proof is unfinished" from "this property is false" by exit code alone.
+
+Select with `--lemma`, not `--prove`: `--prove` hands the very `sorry` nodes
+this mode reports to the autoprover, so the combination is refused — as is
+`--proof-diagnostics` with `--state-audit`, since the two answer opposite
+questions. Both refusals carry the Haskell fork's message and exit 1.
+
+`scripts/zksec_report_gate.sh` gates this mode against the Haskell fork too.
 
 ## Per-lemma proof budget
 

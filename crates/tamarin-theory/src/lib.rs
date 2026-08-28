@@ -69,6 +69,7 @@ pub mod pretty_system;
 pub mod pretty_theory;
 pub mod process_convert;
 pub mod process_inline;
+pub mod proof_diagnostics;
 pub mod proof_skeleton;
 pub mod prove;
 pub mod replay;
