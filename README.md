@@ -405,6 +405,43 @@ Notes:
   clock. Depth is reproducible but hard to choose; a time budget is the one you
   want when the question is "is this lemma going to finish at all?".
 
+## Ablations without duplicate files
+
+An ablation -- running a theory as if one transition or assumption did not
+exist -- otherwise costs a near-duplicate copy of the whole file, which drifts
+from its original the moment either is edited.
+
+```sh
+tamarin-rs --without-restriction=SomeAssumption --prove theory.spthy
+tamarin-rs --without-rule=SomeTransition       --prove theory.spthy
+```
+
+Both drop the named item after parsing and before elaboration, are `=`-only,
+`global`, and repeatable. A theory using neither is byte-identical to before.
+
+**A name that matches nothing is a hard error, not a silent no-op.** An
+ablation that quietly removed nothing would report the *unablated* verdict
+under a command line claiming to have ablated, and the reader would draw the
+opposite conclusion from the one the evidence supports.
+
+One caution about ablations generally: removing an assumption always falsifies
+the property that rested on it. That is arithmetic, not a finding. An ablation
+is evidence only when the assumption it removes is independently justified --
+otherwise the counterexample is just the flag you passed.
+
+## Include cycles
+
+`#include` is upstream Tamarin's, unchanged. What is fixed here is that a
+mutual or self include used to recurse without bound: this parser died with a
+stack overflow, and the Haskell prover hangs. It now reports the chain:
+
+```
+`#include` cycle: /p/lib/x.spthyi -> /p/lib/y.spthyi -> /p/lib/x.spthyi
+```
+
+Note this is a CYCLE check, not include-once: the same file reached twice along
+different paths is a diamond, not a re-entry, and still parses.
+
 ## Not yet ported
 
 - **`diff(...)` / `--diff`** — observational-equivalence mode.
