@@ -2285,13 +2285,19 @@ fn include_cycle_is_reported_with_the_chain() {
     let d = IncludeDir::new("cycle");
     d.write("x.spthyi", "#include \"y.spthyi\"\n");
     d.write("y.spthyi", "#include \"x.spthyi\"\n");
-    let entry = d.write("main.spthy", "theory C\nbegin\n#include \"x.spthyi\"\nend\n");
+    let entry = d.write(
+        "main.spthy",
+        "theory C\nbegin\n#include \"x.spthyi\"\nend\n",
+    );
 
     let err = d.parse(&entry).expect_err("a cycle must not parse");
     let msg = format!("{err}");
     assert!(msg.contains("`#include` cycle"), "{msg}");
     // The chain names both files, so the reader can see which edge to cut.
-    assert!(msg.contains("x.spthyi") && msg.contains("y.spthyi"), "{msg}");
+    assert!(
+        msg.contains("x.spthyi") && msg.contains("y.spthyi"),
+        "{msg}"
+    );
 }
 
 /// A file that includes itself is the degenerate cycle, caught the same way.
@@ -2299,9 +2305,15 @@ fn include_cycle_is_reported_with_the_chain() {
 fn self_include_is_a_cycle() {
     let d = IncludeDir::new("self");
     d.write("loop.spthyi", "#include \"loop.spthyi\"\n");
-    let entry = d.write("main.spthy", "theory S\nbegin\n#include \"loop.spthyi\"\nend\n");
+    let entry = d.write(
+        "main.spthy",
+        "theory S\nbegin\n#include \"loop.spthyi\"\nend\n",
+    );
 
-    let msg = format!("{}", d.parse(&entry).expect_err("self-include must not parse"));
+    let msg = format!(
+        "{}",
+        d.parse(&entry).expect_err("self-include must not parse")
+    );
     assert!(msg.contains("`#include` cycle"), "{msg}");
 }
 
@@ -2311,7 +2323,10 @@ fn self_include_is_a_cycle() {
 #[test]
 fn diamond_include_is_not_a_cycle() {
     let d = IncludeDir::new("diamond");
-    d.write("core.spthyi", "rule Core: [ Fr(~n) ] --[ Core(~n) ]-> [ ]\n");
+    d.write(
+        "core.spthyi",
+        "rule Core: [ Fr(~n) ] --[ Core(~n) ]-> [ ]\n",
+    );
     d.write("a.spthyi", "#include \"core.spthyi\"\n");
     d.write("b.spthyi", "#include \"core.spthyi\"\n");
     let entry = d.write(
@@ -2332,11 +2347,20 @@ fn deep_include_cycle_is_reported() {
     d.write("one.spthyi", "#include \"two.spthyi\"\n");
     d.write("two.spthyi", "#include \"three.spthyi\"\n");
     d.write("three.spthyi", "#include \"one.spthyi\"\n");
-    let entry = d.write("main.spthy", "theory Deep\nbegin\n#include \"one.spthyi\"\nend\n");
+    let entry = d.write(
+        "main.spthy",
+        "theory Deep\nbegin\n#include \"one.spthyi\"\nend\n",
+    );
 
-    let msg = format!("{}", d.parse(&entry).expect_err("deep cycle must not parse"));
+    let msg = format!(
+        "{}",
+        d.parse(&entry).expect_err("deep cycle must not parse")
+    );
     assert!(msg.contains("`#include` cycle"), "{msg}");
-    assert!(msg.contains("three.spthyi"), "the chain names the closing edge: {msg}");
+    assert!(
+        msg.contains("three.spthyi"),
+        "the chain names the closing edge: {msg}"
+    );
 }
 
 /// An acyclic include still works, so the check is not simply refusing
@@ -2344,12 +2368,20 @@ fn deep_include_cycle_is_reported() {
 #[test]
 fn acyclic_include_still_parses() {
     let d = IncludeDir::new("ok");
-    d.write("core.spthyi", "rule Core: [ Fr(~n) ] --[ Core(~n) ]-> [ ]\n");
-    let entry = d.write("main.spthy", "theory OK\nbegin\n#include \"core.spthyi\"\nend\n");
+    d.write(
+        "core.spthyi",
+        "rule Core: [ Fr(~n) ] --[ Core(~n) ]-> [ ]\n",
+    );
+    let entry = d.write(
+        "main.spthy",
+        "theory OK\nbegin\n#include \"core.spthyi\"\nend\n",
+    );
 
     let thy = d.parse(&entry).expect("acyclic include parses");
     assert!(
-        thy.items.iter().any(|i| matches!(i, crate::ast::TheoryItem::Rule(r) if r.name == "Core")),
+        thy.items
+            .iter()
+            .any(|i| matches!(i, crate::ast::TheoryItem::Rule(r) if r.name == "Core")),
         "the included rule is spliced into the item stream"
     );
 }

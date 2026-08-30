@@ -218,7 +218,6 @@ fn a_falsification_outranks_an_inconclusive_result() {
     assert_eq!(exit_code(&t), 2);
 }
 
-
 #[test]
 fn inconclusive_is_three_and_all_clear_is_zero() {
     let inconclusive = tally(

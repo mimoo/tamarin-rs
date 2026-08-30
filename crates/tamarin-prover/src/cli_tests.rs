@@ -630,6 +630,49 @@ fn lemma_timeout_is_global() {
     assert_eq!(a.lemma_timeout, Some(12));
 }
 
+/// `--without-rule` / `--without-restriction` are `=`-only and repeatable, so
+/// several items can be ablated in one run.
+#[test]
+fn without_flags_are_repeatable() {
+    let a = parse(&["--without-rule=A", "--without-rule=B", "x.spthy"]);
+    assert_eq!(a.without_rule, vec!["A", "B"]);
+
+    let a = parse(&[
+        "--without-restriction=R1",
+        "--without-restriction=R2",
+        "x.spthy",
+    ]);
+    assert_eq!(a.without_restriction, vec!["R1", "R2"]);
+
+    // Absent: nothing is dropped, which is the default behaviour.
+    let a = parse(&["x.spthy"]);
+    assert!(a.without_rule.is_empty() && a.without_restriction.is_empty());
+}
+
+/// They are independent: ablating a rule must not touch restrictions.
+#[test]
+fn without_rule_and_without_restriction_do_not_alias() {
+    let a = parse(&["--without-rule=OnlyARule", "x.spthy"]);
+    assert_eq!(a.without_rule, vec!["OnlyARule"]);
+    assert!(a.without_restriction.is_empty());
+}
+
+/// `=`-only, like the other scalar loader flags: a detached token stays a
+/// positional input file rather than being swallowed as the value.
+#[test]
+fn without_flags_are_equals_only() {
+    let a = parse(&["--without-rule=R", "x.spthy"]);
+    assert_eq!(a.without_rule, vec!["R"]);
+    assert_eq!(a.in_files, vec!["x.spthy"]);
+}
+
+/// `global`, so they work on either side of a subcommand word.
+#[test]
+fn without_flags_are_global() {
+    let a = parse(&["interactive", "--without-rule=R", "x.spthy"]);
+    assert_eq!(a.without_rule, vec!["R"]);
+}
+
 // =========================================================================
 // Boolean flags
 // =========================================================================

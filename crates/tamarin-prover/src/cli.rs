@@ -39,6 +39,12 @@
 //! `--processors`, `--maude-processes`, `--data-dir`) take ordinary clap
 //! values: `=`, attached, or space-separated.
 //!
+//! `--without-rule=NAME` / `--without-restriction=NAME` are ZKSec-branch
+//! additions with no counterpart upstream: they drop a named item from the
+//! theory before elaboration so an ablation can be expressed at the command
+//! line instead of as a near-duplicate file. Both are `=`-only, `global` and
+//! repeatable. See [`crate::run`].
+//!
 //! `--lemma-timeout=SECONDS` is a ZKSec-branch addition with no counterpart in
 //! either the pristine submodule or our Haskell fork: HS has no per-lemma
 //! wall-clock budget.  It takes an ordinary `=`-only clap value and is `global`
@@ -147,6 +153,14 @@ pub struct Args {
     /// unbounded, which is the HS-faithful behaviour. See
     /// [`crate::run`] for where the budget is installed.
     pub lemma_timeout: Option<u32>,
+    /// `--without-rule=NAME` — drop the named rule from the theory before
+    /// elaboration. Repeatable. An ablation: run a theory as if one transition
+    /// did not exist, without maintaining a near-duplicate copy of it.
+    pub without_rule: Vec<String>,
+    /// `--without-restriction=NAME` — same, for a restriction. Removing an
+    /// assumption is the commonest ablation, and the one most worth doing at
+    /// the command line rather than in a forked file.
+    pub without_restriction: Vec<String>,
     pub heuristic: Option<String>,
     pub partial_evaluation: Option<PartialEval>,
     pub defines: Vec<String>,
@@ -250,9 +264,33 @@ struct LoadOpts {
     /// Give each lemma at most SECONDS of proof search; one that overruns is
     /// reported `analysis incomplete` and the run continues (absent: no
     /// budget)
-    #[arg(long = "lemma-timeout", global = true, require_equals = true,
-          value_name = "SECONDS")]
+    #[arg(
+        long = "lemma-timeout",
+        global = true,
+        require_equals = true,
+        value_name = "SECONDS"
+    )]
     lemma_timeout: Option<u32>,
+
+    /// Drop the named rule before proving, to run the theory as if that
+    /// transition did not exist (repeatable)
+    #[arg(
+        long = "without-rule",
+        global = true,
+        require_equals = true,
+        value_name = "NAME"
+    )]
+    without_rule: Vec<String>,
+
+    /// Drop the named restriction before proving, to run the theory without
+    /// that assumption (repeatable)
+    #[arg(
+        long = "without-restriction",
+        global = true,
+        require_equals = true,
+        value_name = "NAME"
+    )]
+    without_restriction: Vec<String>,
 
     /// Goal-ranking sequence; overrides the theory's own heuristic
     /// (without a value: `s`, the smart ranking)
@@ -603,6 +641,8 @@ pub fn parse_args(raw: &[String]) -> Result<Args, clap::Error> {
         stop_on_trace: cli.load.stop_on_trace,
         bound: cli.load.bound,
         lemma_timeout: cli.load.lemma_timeout,
+        without_rule: cli.load.without_rule,
+        without_restriction: cli.load.without_restriction,
         heuristic: cli.load.heuristic,
         partial_evaluation: cli.load.partial_evaluation,
         defines: cli.load.defines,

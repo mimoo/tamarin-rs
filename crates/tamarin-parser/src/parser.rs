@@ -1941,10 +1941,7 @@ impl<'a> Parser<'a> {
                 .map(|p| p.display().to_string())
                 .collect();
             chain.push(canonical.display().to_string());
-            return Err(self.err(format!(
-                "`#include` cycle: {}",
-                chain.join(" -> ")
-            )));
+            return Err(self.err(format!("`#include` cycle: {}", chain.join(" -> "))));
         }
 
         // Nested includes in the fragment resolve relative to ITS directory

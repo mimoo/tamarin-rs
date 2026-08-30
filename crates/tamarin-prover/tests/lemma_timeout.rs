@@ -149,7 +149,9 @@ fn a_cut_lemma_is_inconclusive_in_the_audit_and_exits_three() {
 
     assert_eq!(rc, 3, "inconclusive, not falsified\n{stdout}");
     assert!(
-        stdout.contains("state audit: 0 clean, 0 counterexample(s), 0 missing witness(es), 4 inconclusive"),
+        stdout.contains(
+            "state audit: 0 clean, 0 counterexample(s), 0 missing witness(es), 4 inconclusive"
+        ),
         "{stdout}"
     );
 
@@ -181,10 +183,7 @@ fn the_budget_is_per_lemma_not_per_run() {
         return;
     }
     let (_, stdout, _) = run_binary(
-        &[
-            "--prove=transition_is_executable",
-            "--lemma-timeout=0",
-        ],
+        &["--prove=transition_is_executable", "--lemma-timeout=0"],
         &[&fixture(THEORY)],
     );
 

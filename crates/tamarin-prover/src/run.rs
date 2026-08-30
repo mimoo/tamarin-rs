@@ -177,7 +177,6 @@ pub fn proof_status_text(r: &LemmaResult) -> String {
     }
 }
 
-
 /// The verdict a whole-tree `ProofStatus` fold means for a lemma of the given
 /// quantifier.
 ///
@@ -959,9 +958,8 @@ fn ensure_parent_dir(path: &str) -> Result<(), String> {
     if let Some(parent) = std::path::Path::new(path).parent()
         && !parent.as_os_str().is_empty()
     {
-        return create_dirs(parent).map_err(|(dir, e)| {
-            write_io_exception(&dir.to_string_lossy(), "createDirectory", &e)
-        });
+        return create_dirs(parent)
+            .map_err(|(dir, e)| write_io_exception(&dir.to_string_lossy(), "createDirectory", &e));
     }
     Ok(())
 }
@@ -2242,7 +2240,8 @@ fn run_batch(args: &Args) -> Result<i32, RunError> {
         let base_dir = std::path::Path::new(in_file)
             .parent()
             .map(|p| p.to_path_buf());
-        let parsed = match tamarin_parser::parse_theory_with_base(&src, &parser_flags, base_dir) {
+        let mut parsed = match tamarin_parser::parse_theory_with_base(&src, &parser_flags, base_dir)
+        {
             Ok(thy) => thy,
             Err(e) => {
                 if let Some(g) = &e.ghc_error {
@@ -2264,6 +2263,50 @@ fn run_batch(args: &Args) -> Result<i32, RunError> {
                 return Ok(1);
             }
         };
+
+        // `--without-rule` / `--without-restriction`: drop named items before
+        // elaboration, so the rest of the pipeline sees a theory in which that
+        // transition or assumption simply does not exist. This is what an
+        // ablation IS, and doing it here rather than in a forked copy of the
+        // file keeps one theory = one model.
+        //
+        // A name that matches nothing is an ERROR, not a silent no-op: an
+        // ablation that quietly failed to remove anything would report the
+        // UNABLATED result, and the reader would draw the opposite conclusion
+        // from the one the evidence supports. Typos must not be silent here.
+        if !args.without_rule.is_empty() || !args.without_restriction.is_empty() {
+            let mut dropped_rules: Vec<String> = Vec::new();
+            let mut dropped_restrictions: Vec<String> = Vec::new();
+            parsed.items.retain(|item| match item {
+                tamarin_parser::ast::TheoryItem::Rule(r)
+                    if args.without_rule.iter().any(|n| *n == r.name) =>
+                {
+                    dropped_rules.push(r.name.clone());
+                    false
+                }
+                tamarin_parser::ast::TheoryItem::Restriction(x)
+                    if args.without_restriction.iter().any(|n| *n == x.name) =>
+                {
+                    dropped_restrictions.push(x.name.clone());
+                    false
+                }
+                _ => true,
+            });
+            for want in &args.without_rule {
+                if !dropped_rules.iter().any(|n| n == want) {
+                    eprintln!("error: --without-rule={want}: no such rule in the theory");
+                    std::process::exit(1);
+                }
+            }
+            for want in &args.without_restriction {
+                if !dropped_restrictions.iter().any(|n| n == want) {
+                    eprintln!(
+                        "error: --without-restriction={want}: no such restriction in the theory"
+                    );
+                    std::process::exit(1);
+                }
+            }
+        }
         // HS emits this trace marker as soon as the theory parses
         // (TheoryLoader.hs:451).
         let theory_name = parsed.name.clone();
