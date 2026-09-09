@@ -30,6 +30,15 @@
 //! `--proof-diagnostics` therefore needs no retention change, and refuses
 //! `--prove` anyway.
 //!
+//! **Decided lemmas contribute no `sorry`.** A search stops as soon as it
+//! answers the property — an exists-trace lemma the moment it finds a trace,
+//! an all-traces lemma the moment it finds a counterexample — and the sibling
+//! branches it never had to explore stay `sorry` in a proof that is finished.
+//! Those are not open obligations, so a lemma whose whole-tree fold is
+//! `TraceFound`/`Complete` reports none of them; see [`classify_node`]. A
+//! stale `invalid_step` is still reported either way, because it describes the
+//! stored proof text rather than the search.
+//!
 //! [`SysRetention`]: crate::constraint::solver::search::SysRetention
 
 use crate::constraint::solver::context::ProofContext;
@@ -123,11 +132,20 @@ pub fn collect_open_proof_states(
     ctx: &mut ProofContext,
     root: &ProofNode,
 ) -> Result<Vec<OpenProofState>, ProveError> {
+    // The whole-tree fold, the same one the batch driver turns into the
+    // lemma's verdict.  `TraceFound`/`Complete` are the two decided outcomes,
+    // and which of them means "verified" depends on the quantifier — but not
+    // whether the lemma is answered, which is all this needs.
+    let decided = matches!(
+        crate::constraint::solver::search::proof_status(root),
+        crate::constraint::solver::search::ProofStatus::TraceFound
+            | crate::constraint::solver::search::ProofStatus::Complete
+    );
     let saved = ctx.heuristic.take();
     ctx.heuristic = Some(vec![GoalRanking::GoalNr]);
     let mut out = Vec::new();
     let mut path = Vec::new();
-    let walked = walk(ctx, root, &mut path, &mut out);
+    let walked = walk(ctx, root, decided, &mut path, &mut out);
     // Restore before propagating: the ranking swap must not outlive this call
     // even when the walk fails partway down the tree.
     ctx.heuristic = saved;
@@ -137,10 +155,11 @@ pub fn collect_open_proof_states(
 fn walk(
     ctx: &mut ProofContext,
     node: &ProofNode,
+    decided: bool,
     path: &mut Vec<String>,
     out: &mut Vec<OpenProofState>,
 ) -> Result<(), ProveError> {
-    if let Some((kind, reason)) = classify_node(node) {
+    if let Some((kind, reason)) = classify_node(node, decided) {
         out.push(OpenProofState {
             path: path.clone(),
             kind,
@@ -156,7 +175,7 @@ fn walk(
     // `BTreeMap` iteration order here — the two walks visit in lockstep.
     for (case, child) in &node.children {
         path.push(display_case_name(case));
-        let walked = walk(ctx, child, path, out);
+        let walked = walk(ctx, child, decided, path, out);
         // Pop before propagating so the path stays balanced either way.
         path.pop();
         walked?;
@@ -166,7 +185,7 @@ fn walk(
 
 /// HS `(psMethod step, psInfo step)` against `(Sorry reason, Just sys)`.
 /// `None` for every node that is not an open obligation.
-fn classify_node(node: &ProofNode) -> Option<(OpenProofKind, Option<String>)> {
+fn classify_node(node: &ProofNode, decided: bool) -> Option<(OpenProofKind, Option<String>)> {
     let reason = match &node.method {
         ProofMethod::Sorry(reason) => reason.clone(),
         _ => return None,
@@ -181,6 +200,22 @@ fn classify_node(node: &ProofNode) -> Option<(OpenProofKind, Option<String>)> {
         Some(UNHANDLED_CASE) => OpenProofKind::UnhandledCase,
         _ => OpenProofKind::Sorry,
     };
+    // A plain `sorry` under a lemma whose whole-tree fold already DECIDED the
+    // property is not an open obligation.  Tamarin stops an exists-trace
+    // search the moment it finds a trace, so the sibling branches it never
+    // needed to explore stay `sorry` in a proof that is complete and verified;
+    // the same holds for an all-traces lemma the search falsified.  Reporting
+    // those would make every theory that pairs a safety property with an
+    // executability witness — the shape this tool asks models to have — look
+    // unfinished, and the mode's whole job is to say why a lemma did NOT
+    // close.
+    //
+    // `invalid_step` and `unhandled_case` are deliberately NOT suppressed:
+    // they say the stored proof TEXT is stale, which is worth reporting
+    // whether or not the lemma went on to close.
+    if decided && kind == OpenProofKind::Sorry {
+        return None;
+    }
     Some((kind, reason))
 }
 

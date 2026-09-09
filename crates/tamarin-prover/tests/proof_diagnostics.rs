@@ -32,6 +32,12 @@ const THEORY: &str = "proof_diagnostics.spthy";
 /// its own start system.
 const PROOFLESS: &str = "state_audit.spthy";
 
+/// An exists-trace lemma whose search branches before it finds its trace.
+/// Its stored proof is complete and carries no `sorry` text at all, but the
+/// check-and-extend replay enumerates the sibling cases the original search
+/// never had to explore and parks them as annotated `sorry` leaves.
+const DECIDED_SIBLINGS: &str = "decided_siblings.spthy";
+
 fn case(test: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("tamarin_rs_proof_diagnostics_{test}"));
     let _ = std::fs::remove_dir_all(&dir);
@@ -344,4 +350,51 @@ fn a_missing_report_directory_is_created() {
         &[&fixture(THEORY)],
     );
     assert!(report_path.exists());
+}
+
+/// A lemma the fold already DECIDED contributes no open state, even though the
+/// replay parks `sorry` leaves under it.
+///
+/// This is the shape almost every real model has: a safety property proved
+/// alongside an exists-trace executability witness. Tamarin stops that search
+/// the moment it finds a trace, so check-and-extend re-expands the sibling
+/// cases it skipped. Counting those would put a fully verified theory at rc 4
+/// and send a reader hunting for a lemma that is not stuck — which is the
+/// opposite of what this mode is for.
+///
+/// The assertions on the proved theory are the test's own precondition: if the
+/// fixture ever stops branching, this would pass vacuously, so it fails loudly
+/// instead.
+#[test]
+fn a_decided_lemma_contributes_no_open_state() {
+    if !maude_available() {
+        return;
+    }
+    let dir = case("decided");
+    let proved = dir.join("proved.spthy");
+    let report_path = dir.join("diag.json");
+
+    let (prove_rc, prove_out, _) = run_binary(
+        &["--prove", &format!("-o={}", proved.display())],
+        &[&fixture(DECIDED_SIBLINGS)],
+    );
+    assert_eq!(prove_rc, 0, "{prove_out}");
+    assert!(
+        prove_out.contains("executable (exists-trace): verified"),
+        "the fixture must be VERIFIED for this to be about a decided lemma: {prove_out}"
+    );
+    let text = std::fs::read_to_string(&proved).expect("proved theory");
+    assert!(
+        !text.contains("sorry"),
+        "the stored proof itself carries no sorry; the replay is what mints them"
+    );
+
+    let (rc, stdout, _) = run_binary(
+        &[&format!("--proof-diagnostics={}", report_path.display())],
+        &[&proved],
+    );
+    assert_eq!(rc, 0, "a decided lemma must not exit 4: {stdout}");
+    let report = read_report(&report_path);
+    assert_eq!(report["summary"]["open_proof_states"], 0);
+    assert_eq!(states(&report), Vec::<(String, String)>::new());
 }

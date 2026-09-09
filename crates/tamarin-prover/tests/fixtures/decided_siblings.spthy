@@ -1,0 +1,25 @@
+theory Decided_Siblings
+begin
+
+builtins: diffie-hellman, signing, hashing
+
+rule Register:
+  [ Fr(~ltk) ]
+  --[ Registered($A) ]->
+  [ !Ltk($A, ~ltk), !Pk($A, pk(~ltk)), Out(pk(~ltk)) ]
+
+rule Offer:
+  [ !Ltk($A, ~ltk), Fr(~e) ]
+  --[ Offered($A) ]->
+  [ Out(<'g'^~e, sign(h('g'^~e), ~ltk)>) ]
+
+rule Accept:
+  [ In(<X, sig>), !Pk($B, pkB), Fr(~f) ]
+  --[ Accepted($B, X^~f), Verified(sig) ]->
+  [ Out('g'^~f) ]
+
+lemma executable:
+  exists-trace
+  "Ex B k #i. Accepted(B, k)@i"
+
+end
