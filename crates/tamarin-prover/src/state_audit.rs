@@ -97,7 +97,7 @@ impl AuditOutcome {
 /// second classification of the proof tree: `Verified` under `exists-trace`
 /// is HS's `TraceFound`, `Falsified` under `exists-trace` is HS's
 /// `CompleteProof`, and so on — see `run::lemma_verdict`.
-pub fn classify(result: &LemmaResult) -> Option<AuditOutcome> {
+pub(crate) fn classify(result: &LemmaResult) -> Option<AuditOutcome> {
     match &result.verdict {
         LemmaVerdict::Verified if result.exists_trace => Some(AuditOutcome::WitnessFound),
         LemmaVerdict::Verified => Some(AuditOutcome::PropertyVerified),
@@ -156,7 +156,7 @@ pub struct AuditTally {
     pub failures: usize,
 }
 
-pub fn tally(lemma_filter: &[String], file_results: &[FileResult]) -> AuditTally {
+pub(crate) fn tally(lemma_filter: &[String], file_results: &[FileResult]) -> AuditTally {
     let mut t = AuditTally {
         property_verified: 0,
         witness_found: 0,
@@ -219,7 +219,10 @@ pub fn headline(t: &AuditTally) -> String {
 /// One console line per lemma the audit could not clear — every failure and
 /// every inconclusive result.  Clean lemmas are intentionally silent; the
 /// report file carries them.
-pub fn diagnostic_lines(lemma_filter: &[String], file_results: &[FileResult]) -> Vec<String> {
+pub(crate) fn diagnostic_lines(
+    lemma_filter: &[String],
+    file_results: &[FileResult],
+) -> Vec<String> {
     let mut lines = Vec::new();
     for file in file_results {
         for lemma in audited(lemma_filter, file) {
@@ -241,7 +244,7 @@ pub fn diagnostic_lines(lemma_filter: &[String], file_results: &[FileResult]) ->
 /// Build the report document.  `trace_files` is parallel to `file_results`
 /// and carries each theory's resolved `--output-json` target, which the audit
 /// defaults on so a counterexample always has a trace to point at.
-pub fn report(
+pub(crate) fn report(
     lemma_filter: &[String],
     file_results: &[FileResult],
     trace_files: &[Option<String>],

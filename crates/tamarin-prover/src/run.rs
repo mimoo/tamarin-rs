@@ -153,7 +153,7 @@ fn format_lemma_summary_line(r: &LemmaResult) -> String {
 /// Split out of [`format_lemma_summary_line`] so the `--state-audit` report
 /// can carry the same phrase in its `prover_status` field; the summary line's
 /// bytes are unchanged.
-pub fn proof_status_text(r: &LemmaResult) -> String {
+pub(crate) fn proof_status_text(r: &LemmaResult) -> String {
     match &r.verdict {
         // HS `showProofStatus` (Theory/Proof.hs:1105-1108): a falsified
         // exists-trace lemma is a `CompleteProof` of `ExistsSomeTrace`
@@ -2278,14 +2278,12 @@ fn run_batch(args: &Args) -> Result<i32, RunError> {
             let mut dropped_rules: Vec<String> = Vec::new();
             let mut dropped_restrictions: Vec<String> = Vec::new();
             parsed.items.retain(|item| match item {
-                tamarin_parser::ast::TheoryItem::Rule(r)
-                    if args.without_rule.iter().any(|n| *n == r.name) =>
-                {
+                tamarin_parser::ast::TheoryItem::Rule(r) if args.without_rule.contains(&r.name) => {
                     dropped_rules.push(r.name.clone());
                     false
                 }
                 tamarin_parser::ast::TheoryItem::Restriction(x)
-                    if args.without_restriction.iter().any(|n| *n == x.name) =>
+                    if args.without_restriction.contains(&x.name) =>
                 {
                     dropped_restrictions.push(x.name.clone());
                     false

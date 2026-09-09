@@ -1935,7 +1935,12 @@ impl<'a> Parser<'a> {
         // reason, and if it fails for any other we fall back to the resolved
         // path rather than losing the check.
         let canonical = std::fs::canonicalize(&resolved).unwrap_or_else(|_| resolved.clone());
-        if let Some(at) = self.state.include_stack.iter().position(|p| *p == canonical) {
+        if let Some(at) = self
+            .state
+            .include_stack
+            .iter()
+            .position(|p| *p == canonical)
+        {
             let mut chain: Vec<String> = self.state.include_stack[at..]
                 .iter()
                 .map(|p| p.display().to_string())
